@@ -1,9 +1,11 @@
-const crypto = require("crypto");
-const fs = require("fs/promises");
-const http = require("http");
-const path = require("path");
-const { URL } = require("url");
+import crypto from "crypto";
+import fs from "fs/promises";
+import http from "http";
+import path from "path";
+import { fileURLToPath } from "url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
@@ -359,19 +361,23 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-loadEnvFile()
-  .then(() => {
-    const port = Number(process.env.PORT || 3000);
-    const host = process.env.HOST || "127.0.0.1";
+export { server };
 
-    server.listen(port, host, () => {
-      if (!process.env.SESSION_SECRET) {
-        console.warn("Using a development SESSION_SECRET. Set SESSION_SECRET before deploying.");
-      }
-      console.log(`Algo Infinity Verse running at http://${host}:${port}`);
+if (process.env.VERCEL !== "1") {
+  loadEnvFile()
+    .then(() => {
+      const port = Number(process.env.PORT || 3000);
+      const host = process.env.HOST || "127.0.0.1";
+
+      server.listen(port, host, () => {
+        if (!process.env.SESSION_SECRET) {
+          console.warn("Using a development SESSION_SECRET. Set SESSION_SECRET before deploying.");
+        }
+        console.log(`Algo Infinity Verse running at http://${host}:${port}`);
+      });
+    })
+    .catch((error) => {
+      console.error("Failed to load environment configuration:", error);
+      process.exit(1);
     });
-  })
-  .catch((error) => {
-    console.error("Failed to load environment configuration:", error);
-    process.exit(1);
-  });
+}
