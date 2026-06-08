@@ -2557,6 +2557,117 @@ const roadmapSteps = [
   }
 ];
 
+const advancedRoadmapSteps = [
+  {
+    id: 7,
+    title: "Advanced Arrays & Optimization",
+    icon: "fa-bolt",
+    desc: "Master complex array manipulations, sliding window, and two-pointer techniques for hard-level interview problems.",
+    theory: `
+      <p><strong>Advanced Array Optimization:</strong> Many high-level technical interview questions require optimizing array operations from $O(N^2)$ to $O(N)$ or $O(N \log N)$ using advanced pointer movements or auxiliary data structures.</p>
+      <p><strong>Sliding Window:</strong> Used to track contiguous subarrays or substrings that satisfy specific conditions. The window can be fixed-size or dynamic (grows/shrinks based on elements).</p>
+      <p><strong>Trapping Rain Water Pattern:</strong> An elegant application of the two-pointer technique or prefix/suffix maximum arrays to solve complex optimization problems in $O(N)$ time and $O(1)$ space.</p>
+      <p><strong>Design & Cache Optimizations:</strong> Designing high-performance systems like an LRU Cache requires combining a Hash Map (for $O(1)$ lookup) with a Doubly Linked List (for $O(1)$ updates and ordering).</p>
+    `,
+    type: "coding",
+    problems: [9, 5], // Trapping Rain Water, LRU Cache
+    complexity: [
+      { op: "Trapping Rain Water (Two Pointers)", time: "O(N)", space: "O(1)" },
+      { op: "LRU Cache Get / Put Operations", time: "O(1)", space: "O(Capacity)" },
+      { op: "Sliding Window (Dynamic)", time: "O(N)", space: "O(N) (worst-case)" }
+    ]
+  },
+  {
+    id: 8,
+    title: "Advanced Dynamic Programming",
+    icon: "fa-layer-group",
+    desc: "Learn advanced DP optimizations, multi-dimensional DP, and sequence matching techniques.",
+    theory: `
+      <p><strong>Advanced DP Concepts:</strong> Beyond basic Fibonacci recursion, advanced dynamic programming involves identifying states with multiple dimensions, managing complex state transition diagrams, and optimizing space.</p>
+      <p><strong>Longest Increasing Subsequence (LIS):</strong> A classic DP problem. While a naive DP approach takes $O(N^2)$ time, we can optimize it to $O(N \log N)$ by combining dynamic programming with Binary Search (Patience Sorting).</p>
+      <p><strong>Space Optimization:</strong> If the current state only depends on the last few states (e.g., $dp[i]$ depends only on $dp[i-1]$ and $dp[i-2]$ like in the House Robber problem), we can discard the DP array and use just a few variables, reducing space complexity from $O(N)$ to $O(1)$.</p>
+    `,
+    type: "coding",
+    problems: [7, 14], // Longest Increasing Subsequence, House Robber
+    complexity: [
+      { op: "LIS (Naive Dynamic Programming)", time: "O(N^2)", space: "O(N)" },
+      { op: "LIS (DP + Binary Search)", time: "O(N log N)", space: "O(N)" },
+      { op: "House Robber (Tabulation)", time: "O(N)", space: "O(N)" },
+      { op: "House Robber (Space Optimized)", time: "O(N)", space: "O(1)" }
+    ]
+  },
+  {
+    id: 9,
+    title: "Advanced Graph Algorithms",
+    icon: "fa-circle-nodes",
+    desc: "Solve complex graph problems using shortest path, cycle detection, topological sorting, and BFS/DFS.",
+    theory: `
+      <p><strong>Advanced Graphs:</strong> Graphs model complex relationships. Real-world interview problems often require advanced graph traversal strategies, state tracking, and building custom state representations.</p>
+      <p><strong>Topological Sort:</strong> Ordering of vertices in a Directed Acyclic Graph (DAG) such that for every directed edge $uv$, vertex $u$ comes before $v$. Used in dependency resolution (e.g., Course Schedule).</p>
+      <p><strong>Word Ladder (BFS State Space Search):</strong> BFS is used to find the shortest path in unweighted graphs. When finding word transitions, each intermediate word represents a state in the state space.</p>
+      <p><strong>Grid DFS/BFS (Flood Fill):</strong> Traversing matrix structures (like in Number of Islands) to explore connected components and mark visited coordinates.</p>
+    `,
+    type: "coding",
+    problems: [8, 13, 15], // Word Ladder, Number of Islands, Course Schedule
+    complexity: [
+      { op: "BFS Shortest Path (Word Ladder)", time: "O(M^2 * N)", space: "O(M^2 * N) where M is word length" },
+      { op: "DFS Island Counting (Grid Traversal)", time: "O(R * C)", space: "O(R * C) for stack depth" },
+      { op: "Topological Sort (Kahn's / DFS)", time: "O(V + E)", space: "O(V + E)" }
+    ]
+  },
+  {
+    id: 10,
+    title: "Advanced Optimization & Interview Strategies",
+    icon: "fa-crown",
+    desc: "Master interview-level optimization techniques, bit manipulation, and competitive programming tips.",
+    theory: `
+      <p><strong>Final Interview Strategies:</strong> At the advanced level, interviewers look for optimal time/space balances, bitwise optimizations, and clean structuring of backtracking / pruning.</p>
+      <p><strong>Bit Manipulation:</strong> Using bitwise operations (AND, OR, XOR, NOT, Shifts) to solve problems in $O(1)$ space and extremely fast execution. XOR is especially useful for finding single occurrences or differences.</p>
+      <p><strong>Backtracking Pruning:</strong> Optimizing exhaustive searches by cutting off recursive paths early when we know they cannot yield a valid solution.</p>
+    `,
+    type: "quiz",
+    quiz: [
+      {
+        question: "Which technique is most appropriate for finding the shortest path in an unweighted graph?",
+        options: [
+          "Depth-First Search (DFS)",
+          "Breadth-First Search (BFS)",
+          "Dijkstra's Algorithm",
+          "Kruskal's Algorithm"
+        ],
+        correct: 1,
+        explanation: "BFS explores layer by layer and is guaranteed to find the shortest path in terms of number of edges for an unweighted graph."
+      },
+      {
+        question: "What is the optimal time complexity of the Longest Increasing Subsequence (LIS) problem?",
+        options: [
+          "O(N^2)",
+          "O(N log N)",
+          "O(N)",
+          "O(2^N)"
+        ],
+        correct: 1,
+        explanation: "LIS can be solved in O(N log N) time complexity using dynamic programming with binary search."
+      },
+      {
+        question: "How can we optimize the space complexity of the House Robber problem from O(N) to O(1)?",
+        options: [
+          "By using a binary search tree",
+          "By only keeping track of the last two calculated max values",
+          "By using a hash map",
+          "It is not possible to achieve O(1) space"
+        ],
+        correct: 1,
+        explanation: "Since each state only depends on the previous two states, we only need two variables to store the intermediate results, reducing space complexity to O(1)."
+      }
+    ],
+    complexity: [
+      { op: "Bitwise Operations", time: "O(1)", space: "O(1)" },
+      { op: "Pruned Backtracking Search", time: "O(Branch^Depth)", space: "O(Depth)" }
+    ]
+  }
+];
+
 let roadmapTabsInitialized = false;
 let currentQuizAnswers = {};
 
@@ -2564,21 +2675,35 @@ function initRoadmap() {
   // 1. Initialize tabs & modal close events (only once)
   if (!roadmapTabsInitialized) {
     const basicTab = document.getElementById("roadmapBasicTab");
+    const advancedTab = document.getElementById("roadmapAdvancedTab");
     const overviewTab = document.getElementById("roadmapOverviewTab");
     
-    if (basicTab && overviewTab) {
+    if (basicTab && advancedTab && overviewTab) {
       basicTab.addEventListener("click", () => {
         basicTab.classList.add("active");
+        advancedTab.classList.remove("active");
         overviewTab.classList.remove("active");
         document.getElementById("basicRoadmapContainer").classList.add("active");
+        document.getElementById("advancedRoadmapContainer").classList.remove("active");
+        document.getElementById("overviewRoadmapContainer").classList.remove("active");
+      });
+
+      advancedTab.addEventListener("click", () => {
+        advancedTab.classList.add("active");
+        basicTab.classList.remove("active");
+        overviewTab.classList.remove("active");
+        document.getElementById("advancedRoadmapContainer").classList.add("active");
+        document.getElementById("basicRoadmapContainer").classList.remove("active");
         document.getElementById("overviewRoadmapContainer").classList.remove("active");
       });
       
       overviewTab.addEventListener("click", () => {
         overviewTab.classList.add("active");
         basicTab.classList.remove("active");
+        advancedTab.classList.remove("active");
         document.getElementById("overviewRoadmapContainer").classList.add("active");
         document.getElementById("basicRoadmapContainer").classList.remove("active");
+        document.getElementById("advancedRoadmapContainer").classList.remove("active");
       });
     }
     
@@ -2602,8 +2727,9 @@ function initRoadmap() {
     roadmapTabsInitialized = true;
   }
 
-  // 2. Render basic roadmap
+  // 2. Render basic and advanced roadmaps
   renderBasicRoadmap();
+  renderAdvancedRoadmap();
 
   // 3. Render original stages overview
   const progressBar = document.getElementById("roadmapProgress");
@@ -2612,7 +2738,6 @@ function initRoadmap() {
     const totalProblems = practiceProblems.length;
     const completed = userProgress.completedProblems.length;
     const progress = Math.min((completed / totalProblems) * 100, 100);
-
     setTimeout(() => {
       progressBar.style.width = `${progress}%`;
 
@@ -2705,7 +2830,92 @@ function renderBasicRoadmap() {
               </div>
             </div>
             ${isUnlocked 
-              ? `<button class="btn btn-primary btn-sm" onclick="openRoadmapStepModal(${index})">${isCompleted ? 'Review Step' : 'Start Step'}</button>`
+              ? `<button class="btn btn-primary btn-sm" onclick="openRoadmapStepModal(${index}, 'basic')">${isCompleted ? 'Review Step' : 'Start Step'}</button>`
+              : `<button class="btn btn-secondary btn-sm" disabled><i class="fa-solid fa-lock"></i> Locked</button>`
+            }
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  timeline.innerHTML = html;
+}
+
+function renderAdvancedRoadmap() {
+  const timeline = document.getElementById("advancedRoadmapTimeline");
+  if (!timeline) return;
+
+  let html = "";
+
+  advancedRoadmapSteps.forEach((step, index) => {
+    const isCompleted = isRoadmapStepCompleted(step);
+    
+    // Determine if step is unlocked (either step 1 or previous step is completed)
+    let isUnlocked = false;
+    if (index === 0) {
+      isUnlocked = true;
+    } else {
+      const prevStep = advancedRoadmapSteps[index - 1];
+      isUnlocked = isRoadmapStepCompleted(prevStep);
+    }
+
+    let statusClass = "locked";
+    let statusText = "Locked";
+    let statusTagClass = "locked-tag";
+
+    if (isCompleted) {
+      statusClass = "completed";
+      statusText = "Completed";
+      statusTagClass = "completed-tag";
+    } else if (isUnlocked) {
+      statusClass = "active";
+      statusText = "Active";
+      statusTagClass = "active-tag";
+    }
+
+    // Calculate progress
+    let progressPercent = 0;
+    let progressText = "";
+    if (step.type === "quiz") {
+      progressPercent = isCompleted ? 100 : 0;
+      progressText = isCompleted ? "Passed" : "Not Started";
+    } else {
+      const totalProblems = step.problems.length;
+      const solvedProblems = step.problems.filter(pid => userProgress.completedProblems.includes(pid)).length;
+      progressPercent = Math.round((solvedProblems / totalProblems) * 100);
+      progressText = `${solvedProblems}/${totalProblems} Solved`;
+    }
+
+    // Determine Step Icon
+    let stepIcon = `<i class="fa-solid ${step.icon}"></i>`;
+    if (isCompleted) {
+      stepIcon = `<i class="fa-solid fa-check"></i>`;
+    } else if (statusClass === "locked") {
+      stepIcon = `<i class="fa-solid fa-lock"></i>`;
+    }
+
+    html += `
+      <div class="roadmap-step ${statusClass}" data-step="${step.id}">
+        <div class="step-marker-dot">
+          ${stepIcon}
+        </div>
+        <div class="roadmap-step-card">
+          <div class="step-card-header">
+            <span class="step-number">Step ${step.id}</span>
+            <span class="step-status-tag ${statusTagClass}">${statusText}</span>
+          </div>
+          <h3 class="step-title">${step.title}</h3>
+          <p class="step-desc">${step.desc}</p>
+          <div class="step-card-footer">
+            <div class="step-progress">
+              <div class="step-progress-label">Progress: ${progressText} (${progressPercent}%)</div>
+              <div class="step-progress-bar-container">
+                <div class="step-progress-bar-fill" style="width: ${progressPercent}%;"></div>
+              </div>
+            </div>
+            ${isUnlocked 
+              ? `<button class="btn btn-primary btn-sm" onclick="openRoadmapStepModal(${index}, 'advanced')">${isCompleted ? 'Review Step' : 'Start Step'}</button>`
               : `<button class="btn btn-secondary btn-sm" disabled><i class="fa-solid fa-lock"></i> Locked</button>`
             }
           </div>
@@ -2732,8 +2942,9 @@ function openCodingProblem(problemId) {
   handleProblemClick(problemId);
 }
 
-function openRoadmapStepModal(stepIndex) {
-  const step = roadmapSteps[stepIndex];
+function openRoadmapStepModal(stepIndex, type = 'basic') {
+  const steps = type === 'basic' ? roadmapSteps : advancedRoadmapSteps;
+  const step = steps[stepIndex];
   if (!step) return;
 
   const modal = document.getElementById("roadmapStepModal");
@@ -2805,7 +3016,7 @@ function openRoadmapStepModal(stepIndex) {
       submitBtn.style.display = "none";
     } else {
       submitBtn.style.display = "block";
-      submitBtn.onclick = () => submitRoadmapQuiz(stepIndex);
+      submitBtn.onclick = () => submitRoadmapQuiz(stepIndex, type);
     }
 
   } else {
@@ -2841,8 +3052,9 @@ function openRoadmapStepModal(stepIndex) {
   modal.classList.add("active");
 }
 
-function submitRoadmapQuiz(stepIndex) {
-  const step = roadmapSteps[stepIndex];
+function submitRoadmapQuiz(stepIndex, type = 'basic') {
+  const steps = type === 'basic' ? roadmapSteps : advancedRoadmapSteps;
+  const step = steps[stepIndex];
   const container = document.getElementById("roadmapStepQuizContent");
   let allCorrect = true;
   let allAnswered = true;
