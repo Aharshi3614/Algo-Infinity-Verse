@@ -1,3 +1,23 @@
+
+document.addEventListener("submit", function (e) {
+  e.preventDefault();
+  e.stopPropagation();
+  return false;
+}, true);
+window.addEventListener("load", () => {
+  document.addEventListener("submit", (e) => {
+    e.preventDefault();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.ctrlKey) {
+      if (document.activeElement.tagName === "TEXTAREA") {
+        e.stopPropagation();
+      }
+    }
+  });
+});
+
 // ===== QUIZ DATA =====
 const quizQuestions = {
   arrays: [
@@ -1733,6 +1753,18 @@ const chatbotResponses = {
 
 // ===== STATE MANAGEMENT =====
 let userProgress = {
+
+    name: "Learner",
+    avatar: "🚀",
+    completedProblems: [],
+    xp: 0,
+    level: 1,
+    streak: 0,
+    badges: [],
+    lastActive: null,
+    joinDate: null, // Will be set on first load
+    quizScores: {}, // topic -> { bestScore, attempts, totalXP }
+
   name: "Learner",
   avatar: "🚀",
   completedProblems: [],
@@ -1752,6 +1784,7 @@ let userProgress = {
   quizScores: {}, // topic -> { bestScore, attempts, totalXP }
   bestQuizTimes: {},
   activityData: {}, // date-string -> count (e.g. "2026-06-05" -> 3)
+
 };
 
 
@@ -1767,6 +1800,40 @@ let currentProblem = null;
  * @see {@link https://github.com/Eshajha19/Algo-Infinity-Verse/issues/258}
  */
 // ===== INITIALIZATION =====
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOMContentLoaded fired, initializing app...');
+    loadUserData();
+    initLoadingScreen();
+    initNavbar();
+    initHeroSection();
+    initTopicsSection();
+    initQuizSection();
+    initPracticeSection();
+    initRoadmap();
+    initDashboard();
+    initGamification();
+    initChatbot();
+    initProfile();
+    initScrollEffects();
+    initDarkMode();
+
+    // Update profile display after loading
+    
+    console.log('App initialization complete');
+
+    // Language change handler for code editor
+    const langSelect = document.getElementById('languageSelect');
+    if (langSelect) {
+        langSelect.addEventListener('change', () => {
+            if (currentProblem) {
+                const editor = document.getElementById('codeEditor');
+                editor.value = getDefaultCode(langSelect.value, currentProblem);
+                editor.dispatchEvent(new Event('input'));
+            }
+        });
+    }
+  });
 document.addEventListener("DOMContentLoaded", () => {
 
   // Apply saved theme only after DOM is ready to avoid touching document.body too early
@@ -1818,6 +1885,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
 
   const saveNotesBtn = document.getElementById("saveNotesBtn");
 
@@ -2417,6 +2485,54 @@ function startQuiz(topicKey) {
   const normalizedTopicKey = getQuizTopicKey(String(topicKey));
   const topicQuiz = quizQuestions[normalizedTopicKey];
 
+
+    progressFill.style.width = `${progressPercent}%`;
+    bestScoreEl.textContent = `${quizData.bestScore}%`;
+    attemptsEl.textContent = quizData.attempts;
+}
+function showQuizLoading(topicName) {
+    const loader = document.getElementById('quizLoadingScreen');
+    const topic = document.getElementById('quizLoadingTopic');
+
+    if (topic) {
+        topic.textContent = `Loading ${topicName} Quiz`;
+    }
+
+    if (loader) {
+        loader.classList.remove('hidden');
+    }
+
+    document.getElementById('topicQuizQuestionText').style.display = 'none';
+    document.getElementById('topicQuizOptions').style.display = 'none';
+    document.getElementById('topicQuizCounter').style.display = 'none';
+
+    const progress = document.querySelector('.quiz-progress-bar-container');
+    if (progress) progress.style.display = 'none';
+}
+
+function hideQuizLoading() {
+    const loader = document.getElementById('quizLoadingScreen');
+
+    if (loader) {
+        loader.classList.add('hidden');
+    }
+
+    document.getElementById('topicQuizQuestionText').style.display = '';
+    document.getElementById('topicQuizOptions').style.display = '';
+    document.getElementById('topicQuizCounter').style.display = '';
+
+    const progress = document.querySelector('.quiz-progress-bar-container');
+    if (progress) progress.style.display = '';
+}
+function startQuiz(topic) {
+    const topicKey = getQuizTopicKey(topic);
+    const questions = quizQuestions[topicKey];
+    
+    if (!questions || questions.length === 0) {
+        showNotification('No quiz questions available for this topic yet!', 'error');
+        return;
+    }
+
   if (!topicQuiz || topicQuiz.length === 0) {
     console.error("Quiz data not found for:", {
       rawTopicKey: topicKey,
@@ -2428,6 +2544,7 @@ function startQuiz(topicKey) {
 
   // Ensure we use the normalized key everywhere below.
   topicKey = normalizedTopicKey;
+
 
 
   const resultEl = document.getElementById("topicQuizResult");
@@ -3822,6 +3939,58 @@ window.openRoadmapStepModal = openRoadmapStepModal;
 
 // ===== PROFILE =====
 function initProfile() {
+
+    var profileName = document.getElementById("profileName");
+    if (profileName) {
+        profileName.textContent = userProgress.name;
+    }
+    
+    // Set joined date
+    var joinDate = document.getElementById("joinDate");
+    if (joinDate) {
+        let joinDateObj;
+        if (userProgress.joinDate) {
+            joinDateObj = new Date(userProgress.joinDate);
+        } else {
+            joinDateObj = new Date();
+            userProgress.joinDate = joinDateObj.toISOString();
+            saveUserData();
+        }
+        joinDate.textContent = joinDateObj.toLocaleDateString("en-US", {
+            month: "long",
+            day: "numeric",
+            year: "numeric"
+        });
+    }
+    
+    // Set current date in dashboard
+    var currentDateElement = document.getElementById("current-date");
+    if (currentDateElement) {
+        var today = new Date();
+        currentDateElement.textContent = "Today: " + today.toLocaleDateString("en-US", {
+            month: "long",
+            day: "numeric",
+            year: "numeric"
+        });
+    }
+    
+    // Set current date in dashboard card
+    var dashboardCurrentDateElement = document.getElementById("dashboard-current-date");
+    if (dashboardCurrentDateElement) {
+        var today = new Date();
+        dashboardCurrentDateElement.textContent = "Today: " + today.toLocaleDateString("en-US", {
+            month: "long",
+            day: "numeric",
+            year: "numeric"
+        });
+    }
+    
+    var avatarIcon = document.querySelector('.avatar-icon');
+    if (avatarIcon) {
+        avatarIcon.textContent = userProgress.avatar || '🚀';
+    }
+    updateProfile();
+
   var profileName = document.getElementById("profileName") || document.getElementById("profileDashboardName");
   if (profileName) {
     profileName.textContent = userProgress.name;
@@ -3858,6 +4027,7 @@ function initProfile() {
     avatarIcon.textContent = userProgress.avatar || "🚀";
   }
   updateProfile();
+
 }
 
 function updateProfile() {
@@ -4508,6 +4678,118 @@ function initChatbot() {
 
   if (!toggle || !windowEl || !close || !input || !send) return;
 
+  // Inject Doubt Generator toggle switch dynamically into header
+  const header = windowEl.querySelector(".chatbot-header");
+  if (header && !document.getElementById("doubtGenToggle")) {
+    if (!document.getElementById("doubt-gen-styles")) {
+      const styleEl = document.createElement("style");
+      styleEl.id = "doubt-gen-styles";
+      styleEl.textContent = `
+        .doubt-gen-toggle-container {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-left: auto;
+          margin-right: 12px;
+          font-size: 0.75rem;
+          color: rgba(255, 255, 255, 0.7);
+          user-select: none;
+          background: rgba(255, 255, 255, 0.05);
+          padding: 4px 8px;
+          border-radius: 20px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .doubt-gen-toggle-container span {
+          font-weight: 600;
+          letter-spacing: 0.5px;
+        }
+        .doubt-gen-switch {
+          position: relative;
+          display: inline-block;
+          width: 32px;
+          height: 18px;
+        }
+        .doubt-gen-switch input {
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+        .doubt-gen-slider {
+          position: absolute;
+          cursor: pointer;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: rgba(255, 255, 255, 0.15);
+          transition: .3s ease;
+          border-radius: 34px;
+        }
+        .doubt-gen-slider:before {
+          position: absolute;
+          content: "";
+          height: 12px;
+          width: 12px;
+          left: 3px;
+          bottom: 3px;
+          background-color: #fff;
+          transition: .3s ease;
+          border-radius: 50%;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        }
+        .doubt-gen-switch input:checked + .doubt-gen-slider {
+          background-color: var(--primary, #8b5cf6);
+          box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+        }
+        .doubt-gen-switch input:checked + .doubt-gen-slider:before {
+          transform: translateX(14px);
+        }
+      `;
+      document.head.appendChild(styleEl);
+    }
+
+    const toggleContainer = document.createElement("div");
+    toggleContainer.className = "doubt-gen-toggle-container";
+    toggleContainer.innerHTML = `
+      <span>Doubt Gen</span>
+      <label class="doubt-gen-switch">
+        <input type="checkbox" id="doubtGenToggle" aria-label="Toggle self-debugging doubt generator mode">
+        <span class="doubt-gen-slider"></span>
+      </label>
+    `;
+    header.insertBefore(toggleContainer, close);
+
+    const toggleInput = document.getElementById("doubtGenToggle");
+    const headerTitle = header.querySelector("h4");
+    if (toggleInput && headerTitle) {
+      toggleInput.addEventListener("change", () => {
+        if (toggleInput.checked) {
+          headerTitle.textContent = "Doubt Generator";
+          showNotification("Self-Debugging Mode Activated! Ask questions to get guided debugging hints.", "success");
+          addChatMessage(
+            `<div style="font-size: 0.85rem; color: #a7f3d0; background: rgba(16, 185, 129, 0.1); border: 1px dashed #10b981; padding: 8px 12px; border-radius: 8px; margin-bottom: 5px;">
+              🔍 <strong>Doubt Generator Enabled</strong><br>
+              Instead of giving you code solutions, I will ask reflective Socratic questions to help you spot and fix bugs yourself!
+             </div>`,
+            "bot",
+            { html: true }
+          );
+        } else {
+          headerTitle.textContent = "Algo Assistant";
+          showNotification("Standard Algo Assistant Mode Activated.", "info");
+          addChatMessage(
+            `<div style="font-size: 0.85rem; color: #c084fc; background: rgba(139, 92, 246, 0.1); border: 1px dashed #a855f7; padding: 8px 12px; border-radius: 8px; margin-bottom: 5px;">
+              💡 <strong>Standard Assistant Enabled</strong><br>
+              I will now provide direct code templates, algorithm explanations, and time/space complexity analysis!
+             </div>`,
+            "bot",
+            { html: true }
+          );
+        }
+      });
+    }
+  }
+
   toggle.addEventListener("click", () => {
     windowEl.classList.toggle("hidden");
     const badge = toggle.querySelector(".chatbot-badge");
@@ -4590,6 +4872,74 @@ function addChatMessage(message, sender, { html = false } = {}) {
 
 function getBotResponse(question) {
   const q = question.toLowerCase();
+
+  const doubtGenToggle = document.getElementById("doubtGenToggle");
+  const isDoubtGenActive = doubtGenToggle && doubtGenToggle.checked;
+
+  if (isDoubtGenActive) {
+    let category = "General";
+    let doubtQuestion = "";
+    let debuggingTip = "";
+
+    // Code snippet detection
+    const isCode = q.includes("{") || q.includes("}") || q.includes("function") || q.includes("def ") || q.includes("for(") || q.includes("while(") || q.includes("let ") || q.includes("const ") || q.includes("var ");
+
+    if (isCode) {
+      category = "Code Analysis";
+      doubtQuestion = "Look closely at your loop/recursion variables. Are they guaranteed to change in every iteration to meet the termination condition, or is there a path that leads to an infinite loop?";
+      debuggingTip = "Trace the value of your loop counters or recursive inputs for the first 3 iterations. Do they move closer to the base/termination case?";
+    } else if (q.includes("sort") || q.includes("bubble") || q.includes("selection") || q.includes("insertion") || q.includes("merge") || q.includes("quick") || q.includes("heap") || q.includes("swap")) {
+      category = "Sorting Algorithms";
+      doubtQuestion = "What happens to equal elements during comparisons? Is your sorting condition preserving their relative order (stable), or could it swap them unnecessarily?";
+      debuggingTip = "Dry-run your sorting condition with a small, duplicate array (e.g., `[2, 2, 1]`) and check if it swaps duplicate elements.";
+    } else if (q.includes("recursion") || q.includes("recursive") || q.includes("fibonacci") || q.includes("factorial") || q.includes("backtrack") || q.includes("stack overflow")) {
+      category = "Recursion & Call Stack";
+      doubtQuestion = "Is your recursion guaranteed to reach the base case? What happens with negative, extremely large, or empty inputs?";
+      debuggingTip = "Add console logs at the very top of your function to print the input values. This lets you trace the sequence of recursive calls.";
+    } else if (q.includes("dp") || q.includes("dynamic programming") || q.includes("memoization") || q.includes("tabulation") || q.includes("knapsack") || q.includes("lcs") || q.includes("coin change")) {
+      category = "Dynamic Programming";
+      doubtQuestion = "How are you defining your subproblem states? Are the base cases of your DP array/table correctly initialized before you start filling it?";
+      debuggingTip = "Draw a small DP table on paper and fill in the first 3 cells manually. Does your transition equation yield the correct values?";
+    } else if (q.includes("tree") || q.includes("bst") || q.includes("graph") || q.includes("node") || q.includes("edge") || q.includes("cycle") || q.includes("bfs") || q.includes("dfs") || q.includes("dijkstra")) {
+      category = "Trees & Graphs";
+      doubtQuestion = "Does your traversal check for cycles or visited nodes? What happens if you run this on a graph with disconnected components or a tree with a null root?";
+      debuggingTip = "Verify that you have initialized a 'visited' set/array to track processed nodes, and verify if root/null checks are at the very beginning.";
+    } else if (q.includes("array") || q.includes("list") || q.includes("index") || q.includes("bounds") || q.includes("empty") || q.includes("null") || q.includes("out of bounds") || q.includes("pointer")) {
+      category = "Arrays & Memory Bounds";
+      doubtQuestion = "What happens if the input is empty or has only one element? Are your loop boundaries (e.g., i < length vs i <= length) safe from off-by-one errors?";
+      debuggingTip = "Manually check the index calculation on the last iteration. Does it access an index equal to the array's length?";
+    } else {
+      category = "General Self-Debugging";
+      doubtQuestion = "What are the exact inputs and outputs you expect? Have you dry-run the logic step-by-step with a pencil and paper?";
+      debuggingTip = "Try explaining your algorithm line-by-line to a 'rubber duck' or writing the steps in simple English comments first.";
+    }
+
+    return `
+      <div class="assistant-response doubt-gen-response">
+        <h4 style="color: var(--accent, #a78bfa);"><i class="fas fa-question-circle"></i> Doubt Generator Mode</h4>
+        
+        <div class="response-section" style="margin-top: 8px;">
+          <strong>Category:</strong> <span class="category-badge" style="background: rgba(139, 92, 246, 0.2); border: 1px solid rgba(139, 92, 246, 0.3); padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; color: #c084fc;">${category}</span>
+        </div>
+        
+        <div class="response-section" style="margin-top: 12px; border-left: 3px solid var(--primary, #8b5cf6); padding-left: 10px;">
+          <h5 style="margin: 0 0 4px 0; font-size: 0.9rem; color: var(--accent, #a78bfa);">🔍 Socratic Question:</h5>
+          <p class="socratic-question" style="font-style: italic; color: #f1f5f9; margin: 0; line-height: 1.4;">
+            "${doubtQuestion}"
+          </p>
+        </div>
+
+        <div class="response-section" style="margin-top: 14px; background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.05); padding: 8px 12px; border-radius: 6px;">
+          <h5 style="margin: 0 0 4px 0; font-size: 0.9rem; color: #10b981;">🛠️ Debugging Tip:</h5>
+          <p style="margin: 0; font-size: 0.85rem; line-height: 1.4; color: #cbd5e1;">${debuggingTip}</p>
+        </div>
+
+        <div class="response-section" style="margin-top: 14px; font-size: 0.75rem; color: var(--text-muted, #94a3b8); border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 8px;">
+          <i class="fas fa-info-circle"></i> <em>Answer the question above to locate the bug. Turn off "Doubt Gen" in the header to get direct solutions.</em>
+        </div>
+      </div>
+    `;
+  }
 
   let response = chatbotResponses["default"];
 
@@ -4800,124 +5150,113 @@ async function getAuthenticatedSession() {
 }
 
 function loadUserData() {
-  try {
-    const saved = localStorage.getItem("algoInfinityVerse");
-    if (saved) {
-      const data = JSON.parse(saved);
-      userProgress = { ...userProgress, ...data };
 
-      // Ensure quizScores exists
-      if (!userProgress.quizScores) {
-        userProgress.quizScores = {};
-      }
+    try {
 
-      // Ensure completedRoadmapSteps exists
-      if (!userProgress.completedRoadmapSteps) {
-        userProgress.completedRoadmapSteps = [];
-      }
+        const saved = localStorage.getItem("algoInfinityVerse");
 
-      // Sanitize recently viewed problems (can be corrupted in localStorage)
-      const practiceProblemIds = new Set(practiceProblems.map((p) => p.id));
-      const rawRecent = Array.isArray(userProgress.recentProblems)
-        ? userProgress.recentProblems
-        : [];
+        if (saved) {
 
-      const sanitizedRecent = rawRecent
-        .map((id) => Number(id))
-        .filter((id) => Number.isFinite(id) && practiceProblemIds.has(id));
+            const data = JSON.parse(saved);
 
-      const hadCorruption =
-        !Array.isArray(userProgress.recentProblems) ||
-        sanitizedRecent.length !== rawRecent.length;
-
-      userProgress.recentProblems = sanitizedRecent.slice(0, 5);
-
-      if (hadCorruption) {
-        saveUserData();
-      }
-      if (!userProgress.activityData) {
-        userProgress.activityData = {};
-      }
-
-      // Backfill activity heatmap from existing completed problems
-      backfillActivityData();
-
-      // Update streak if user was active yesterday
-      if (userProgress.lastActive) {
-        const lastActive = new Date(userProgress.lastActive);
-        const today = new Date();
-        const diffDays = getDaysDifference(lastActive, today);
+            userProgress = {
+                ...userProgress,
+                ...data
+            };
 
 
-        if (diffDays === 0) {
-          // Already active today
-        } else {
-          let daysMissed = diffDays > 0 ? diffDays - 1 : 0;
-          while (daysMissed > 0 && userProgress.freezes > 0) {
-            userProgress.freezes -= 1;
-            daysMissed -= 1;
-            userProgress.freezeHistory.push({
-              date: new Date(today.getTime() - (daysMissed + 1) * 24 * 60 * 60 * 1000).toISOString(),
-              reason: "Missed day automatically frozen"
-            });
-          }
-          if (daysMissed > 0) {
-            userProgress.streak = 0;
-          } else {
-            userProgress.streak += 1;
-            if (userProgress.streak > 0 && userProgress.streak % 7 === 0) {
-              userProgress.freezes += 1;
-              showNotification("Milestone reached! You earned a Streak Freeze!", "success");
+            if (!userProgress.quizScores) {
+                userProgress.quizScores = {};
             }
-          }
+
+
+            if (!userProgress.completedRoadmapSteps) {
+                userProgress.completedRoadmapSteps = [];
+            }
+
+
+            if (!userProgress.activityData) {
+                userProgress.activityData = {};
+            }
+
+
+            backfillActivityData();
+
+
+        } else {
+
+
+            userProgress.name = "Learner";
+            userProgress.avatar = "🚀";
+            userProgress.completedProblems = [1,2,10];
+            userProgress.xp = 350;
+            userProgress.level = 2;
+            userProgress.streak = 3;
+            userProgress.badges = [1];
+            userProgress.quizScores = {};
+            userProgress.activityData = {};
+
+            saveUserData();
+
         }
+
+
+    } catch(error) {
+
+
+        console.error(
+            "Error loading user data:",
+            error
+        );
+
+
+        userProgress = {
+
+            name:"Learner",
+            avatar:"🚀",
+            completedProblems:[],
+            xp:0,
+            level:1,
+            streak:0,
+            badges:[],
+            lastActive:null,
+            quizScores:{},
+            activityData:{}
+
+        };
+
+
         saveUserData();
-      }
-    } else {
-      // Initialize with some demo data
-      userProgress.name = "Learner";
-      userProgress.avatar = "🚀";
-      userProgress.completedProblems = [1, 2, 10];
-      userProgress.xp = 350;
-      userProgress.level = 2;
-      userProgress.streak = 3;
-      userProgress.badges = [1];
-      userProgress.quizScores = {};
-      userProgress.activityData = {};
-      backfillActivityData();
-      saveUserData();
+
     }
-  } catch (error) {
-    console.error("Error loading user data, resetting to defaults:", error);
-    // Reset to defaults
-    userProgress = {
-      name: "Learner",
-      avatar: "🚀",
-      completedProblems: [],
-      xp: 0,
-      level: 1,
-      streak: 0,
-      favoriteProblems: [],
-      problemNotes: {},
-      badges: [],
-      lastActive: null,
-      quizScores: {},
-      bestQuizTimes: {},
-      activityData: {},
-    };
-    saveUserData();
-  }
-  // Update profile display after loading
-  updateProfile();
-  
-  // Also fetch session to get real name
-  getAuthenticatedSession().then(session => {
-    if (session && session.user && session.user.name) {
-      userProgress.name = session.user.name;
-      updateProfile();
-      saveUserData();
-    }
-  });
+
+
+    updateProfile();
+
+
+    getAuthenticatedSession()
+    .then(session=>{
+
+        if(
+          session &&
+          session.user &&
+          session.user.name
+        ){
+
+            userProgress.name =
+            session.user.name;
+
+            updateProfile();
+
+            saveUserData();
+
+        }
+
+
+        initProfile();
+
+    });
+
 }
 
 // ===== QUIZ EDITOR =====
@@ -5997,6 +6336,93 @@ if (document.readyState === 'loading') {
 // Initialize some animations after page load
 window.addEventListener("load", () => {
 });
+// ✅ FIX: Current Date feature for dashboard + profile
+
+function updateDate() {
+    const today = new Date();
+
+    const formattedDate = today.toLocaleDateString(undefined, {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric"
+    });
+
+    const dashboardDate = document.getElementById("dashboard-current-date");
+    const profileDate = document.getElementById("profile-current-date");
+
+    if (dashboardDate) {
+        dashboardDate.textContent = formattedDate;
+    }
+
+    if (profileDate) {
+        profileDate.textContent = formattedDate;
+    }
+}
+
+// run immediately
+updateDate();
+
+// optional: auto refresh every hour (safe for daily date change)
+setInterval(updateDate, 60 * 60 * 1000);
+let isRunning = false;
+
+document.addEventListener("DOMContentLoaded", () => {
+  const codeEl = document.getElementById("perlEditor");
+  const outputEl = document.getElementById("perlOutput");
+
+  document.getElementById("runBtn").addEventListener("click", runPerl);
+
+  document.getElementById("resetBtn").addEventListener("click", () => {
+    codeEl.value = "";
+    outputEl.textContent = "Run code to see output...";
+  });
+
+  document.getElementById("sampleBtn").addEventListener("click", () => {
+    codeEl.value =
+`print "Hello World\\n";
+
+my $name = "DSA Learner";
+print "Welcome $name\\n";`;
+  });
+});
+
+async function runPerl() {
+  if (isRunning) return;
+  isRunning = true;
+
+  const editor = document.getElementById("perlEditor");
+  const output = document.getElementById("perlOutput");
+
+  const code = editor ? editor.value.trim() : "";
+
+  console.log("DEBUG CODE:", code); // 👈 important debug
+
+  if (!code) {
+    output.textContent = "❌ No code provided";
+    isRunning = false;
+    return;
+  }
+
+  output.textContent = "Running... ⏳";
+
+  try {
+    const res = await fetch("http://localhost:5000/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code })
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    output.textContent = data.output || data.error || "No output";
+  } catch (err) {
+    output.textContent = "Error: " + err.message;
+  }
+
+
+  isRunning = false;
+}
 
 // ===== NEWSLETTER FORM VALIDATION =====
 function validateEmail(email) {
@@ -6424,3 +6850,4 @@ function resetGame() {
     total: 0, timer: null, timeLeft: 30, xpEarned: 0,
   };
 }
+
