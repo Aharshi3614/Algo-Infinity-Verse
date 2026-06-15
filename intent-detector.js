@@ -53,13 +53,16 @@ function createIntentDetector(options = {}) {
     const now = Date.now();
     lastEditAt = now;
     editsSinceLastRun++;
+    const now = Date.now();
+    const prevCode = lastCode;
+    lastEditAt = now;
+    editsSinceLastRun++;
     lastCode = code;
 
-    // If user is editing again after errors, clear "stuck" buildup
-    // only once they've made a meaningful change.
-    if (diffSize(lastCode, code) > 0 && consecutiveErrorRuns > 0) {
-      // keep counting errors until a successful run resets it
-    }
+    // If user made a meaningful edit after errors, consider clearing stuck state
+    // (Currently, stuck state is only cleared by a successful run in recordRun)
+
+    evaluate();
 
     evaluate();
   }
