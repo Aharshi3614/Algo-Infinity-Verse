@@ -283,6 +283,13 @@ async function writeUsers(users) {
 }
 
 // ── Memory Scanner (Spaced Repetition, SM-2) ─────────────────────────────────
+// NOTE: This currently uses local JSON file storage, matching the existing
+// users.json/feedback.json pattern in this codebase. In multi-instance or
+// serverless (VERCEL=1 / Firestore) deployments this is not a shared source
+// of truth. Migrating to Firestore (mirroring getUserByEmail/createUser's
+// useFirestore branching) is tracked as a follow-up.
+let memoryWriteQueue = Promise.resolve();
+
 async function ensureMemoryStore() {
   await fs.mkdir(DATA_DIR, { recursive: true });
   try {
@@ -298,11 +305,29 @@ async function readMemoryStore() {
   return JSON.parse(raw || "{}");
 }
 
-async function writeMemoryStore(store) {
-  await ensureMemoryStore();
-  await fs.writeFile(MEMORY_FILE, `${JSON.stringify(store, null, 2)}\n`);
+async function writeMemoryStoreAtomic(filePath, store) {
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmpPath, `${JSON.stringify(store, null, 2)}\n`);
+  await fs.rename(tmpPath, filePath);
 }
 
+// Serializes read-modify-write cycles so concurrent /api/memory/* requests
+// cannot clobber each other's updates. `mutator` receives the current store
+// and must return the updated store.
+async function updateMemoryStore(mutator) {
+  const task = memoryWriteQueue.then(async () => {
+    await ensureMemoryStore();
+    const raw = await fs.readFile(MEMORY_FILE, "utf8");
+    const store = JSON.parse(raw || "{}");
+    const updated = await mutator(store);
+    await writeMemoryStoreAtomic(MEMORY_FILE, store);
+    return updated;
+  });
+
+  // Prevent one rejected task from permanently breaking the queue.
+  memoryWriteQueue = task.catch(() => {});
+  return task;
+}
 // SM-2 algorithm: quality is 0-5 (0 = total blackout, 5 = perfect recall)
 function applySM2(card, quality) {
   const q = Math.max(0, Math.min(5, Number(quality)));
@@ -615,15 +640,17 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 400, { error: "Quality must be a number between 0 and 5." });
     }
 
-    const store = await readMemoryStore();
-    const userCards = store[session.sub] || {};
-    const existing = userCards[topic.trim()] || { topic: topic.trim() };
-    const updated = applySM2(existing, quality);
-    userCards[topic.trim()] = updated;
-    store[session.sub] = userCards;
-    await writeMemoryStore(store);
+    const trimmedTopic = topic.trim();
+    const updatedCard = await updateMemoryStore((store) => {
+      const userCards = store[session.sub] || {};
+      const existing = userCards[trimmedTopic] || { topic: trimmedTopic };
+      const updated = applySM2(existing, quality);
+      userCards[trimmedTopic] = updated;
+      store[session.sub] = userCards;
+      return updated;
+    });
 
-    return sendJson(res, 200, { success: true, card: updated });
+    return sendJson(res, 200, { success: true, card: updatedCard });
   }
 
   if (pathname === "/api/memory/due" && req.method === "GET") {

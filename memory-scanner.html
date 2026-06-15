@@ -15,7 +15,7 @@
       <p>Track topics you've practiced and let spaced repetition tell you what to revise next.</p>
     </header>
 
-    <div id="sessionNotice" class="session-notice"></div>
+    <div id="sessionNotice" class="session-notice" role="status" aria-live="polite"></div>
 
     <section class="add-topic-section">
       <h2>Log a Practice Session</h2>
@@ -41,7 +41,7 @@
           <span class="btn-loader hidden"><i class="fas fa-spinner fa-spin"></i></span>
         </button>
       </form>
-      <p id="logMessage" class="form-message hidden"></p>
+      <p id="logMessage" class="form-message hidden" role="status" aria-live="polite"></p>
     </section>
 
     <section class="due-section">

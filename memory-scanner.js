@@ -20,7 +20,17 @@ document.addEventListener("DOMContentLoaded", () => {
         if (data.authenticated && data.user) {
           isAuthenticated = true;
           sessionNotice.className = "session-notice authenticated";
-          sessionNotice.innerHTML = `<i class="fas fa-circle-check"></i> Tracking memory for <strong>${data.user.name}</strong> (${data.user.email})`;
+          sessionNotice.textContent = "";
+          const icon = document.createElement("i");
+          icon.className = "fas fa-circle-check";
+          const strong = document.createElement("strong");
+          strong.textContent = data.user.name;
+          sessionNotice.append(
+            icon,
+            " Tracking memory for ",
+            strong,
+            ` (${data.user.email})`
+          );
           return;
         }
       }
@@ -115,6 +125,11 @@ document.addEventListener("DOMContentLoaded", () => {
   logForm.addEventListener("submit", async (e) => {
     e.preventDefault();
 
+    if (!isAuthenticated) {
+      showLogMessage("Please log in to log a practice session.", "error");
+      return;
+    }
+
     const topic = topicInput.value.trim();
     const quality = qualityInput.value;
 
@@ -150,7 +165,7 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error(err);
       showLogMessage(err.message || "Failed to log session. Please try again.", "error");
     } finally {
-      logBtn.disabled = false;
+      logBtn.disabled = !isAuthenticated;
       btnText.classList.remove("hidden");
       btnLoader.classList.add("hidden");
     }
