@@ -627,6 +627,7 @@ body[data-page="signup"] .auth-switch {
 
 /* ===== NAVIGATION BAR ===== */
 .navbar {
+  
   position: fixed;
   top: 0;
   left: 0;
@@ -5788,7 +5789,11 @@ body.modal-open {
   .hero-buttons {
     flex-direction: column;
     align-items: center;
+<<<<<<< HEAD
     width: 100%;
+=======
+    width:100%;
+>>>>>>> 571e8e1 (fix: improve mobile and tablet responsiveness (#359))
   }
 
   .hero-buttons .btn {
@@ -5909,7 +5914,6 @@ body.modal-open {
     width: 100%;
     min-width: 0;
   }
-
   .problem-header {
     flex-wrap: wrap;
     gap: 0.5rem;
