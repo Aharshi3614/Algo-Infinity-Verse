@@ -6,6 +6,7 @@
     <title>Python Editor – Live Code Editor | Algo Infinity Verse</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="python-editor.css" />
+    <link rel="stylesheet" href="intent-detector.css" />
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Poppins:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   </head>
@@ -119,7 +120,13 @@
 
     <section id="editor" class="section py-section">
       <div class="py-container">
-        <div class="py-toolbar">
+        <div id="intentHintBanner" class="intent-hint-banner hidden" role="status" aria-live="polite">
+                  <span class="intent-hint-text"></span>
+                 <button class="intent-hint-dismiss" aria-label="Dismiss hint">
+                 <i class="fas fa-times"></i>
+                 </button>
+                </div>
+                <div class="py-toolbar">
           <div class="py-toolbar-left">
             <span class="py-label"><i class="fab fa-python py-python-icon"></i> Python Editor</span>
             <select id="pyExampleSelect" class="py-select" aria-label="Load example">
@@ -204,7 +211,8 @@
     </footer>
 
     <script src="./auth.js"></script>
-    <script src="./script.js"></script>
-    <script src="./python-editor.js"></script>
+        <script src="./script.js"></script>
+       <script src="./intent-detector.js"></script>
+       <script src="./python-editor.js"></script>
   </body>
 </html>
