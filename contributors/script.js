@@ -1,4 +1,3 @@
-// Contributors Data (will be fetched from API)
 // Contributor Data & UI logic. For dynamic GitHub fetching, contributors/index.html
 // already loads GitHub data in-page and opens a modal profile with full details.
 // If you prefer a separate profile page instead of a modal, replace the modal
@@ -41,14 +40,10 @@ const contributorsData = [
     }
 ];
 
-// Render Leaderboard
 function renderLeaderboard(contributors) {
     const sorted = [...contributors].sort((a, b) => b.contributions - a.contributions);
     const top3 = sorted.slice(0, 3);
     const leaderboardEl = document.getElementById('leaderboard');
-    
-    const ranks = ['🥇', '🥈', '🥉'];
-    
 
     const ranks = ['1', '2', '3'];
 
@@ -61,12 +56,6 @@ function renderLeaderboard(contributors) {
             <div class="leaderboard-info">
                 <div class="leaderboard-name">${contributor.name}</div>
                 <div class="leaderboard-stats">
-                    <span>📊 ${contributor.contributions} contributions</span>
-                    <span>🔀 ${contributor.prs} PRs</span>
-                    <span>📋 ${contributor.issues} issues</span>
-                </div>
-            </div>
-            ${contributor.badges.includes('Gold') ? '<span style="font-size:1.2rem">⭐</span>' : ''}
                     <span> ${contributor.contributions} contributions</span>
                     <span> ${contributor.prs} PRs</span>
                     <span> ${contributor.issues} issues</span>
@@ -76,10 +65,6 @@ function renderLeaderboard(contributors) {
     `).join('');
 }
 
-// Render Contributors Grid
-function renderContributors(contributors) {
-    const grid = document.getElementById('contributorsGrid');
-    
 function renderContributors(contributors) {
     const grid = document.getElementById('contributorsGrid');
 
@@ -113,12 +98,6 @@ function renderContributors(contributors) {
     `).join('');
 }
 
-// View Profile Function
-function viewProfile(username) {
-    window.location.href = `contributor-profile.html?username=${username}`;
-}
-
-// Initialize
 function viewProfile(username) {
     window.location.href = `profile.html?username=${username}`;
 }
