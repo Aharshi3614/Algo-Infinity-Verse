@@ -21,7 +21,8 @@ const els = {
     spaceMeterBox: document.getElementById('spaceMeterBox'),
     parseStatus: document.getElementById('parseStatus'),
     nodeCount: document.getElementById('nodeCount'),
-    parseTime: document.getElementById('parseTime')
+    parseTime: document.getElementById('parseTime'),
+    complexityHud: document.getElementById('complexityHud')
 };
 
 // Colors mapping to Big-O
@@ -35,25 +36,33 @@ const COMPLEXITY_COLORS = {
 };
 
 function initASTLinter() {
+    CodeMirror.defineGutter("linter-gutter", {
+        class: "CodeMirror-linter-gutter"
+    });
+    
     editor = CodeMirror(els.editorContainer, {
         lineNumbers: true,
         theme: 'material-palenight',
         mode: 'javascript',
         gutters: ["CodeMirror-linenumbers", "linter-gutter"],
-        value: `// Naive O(N^2) Two Sum Implementation
+        value: `// Optimized O(N) Two Sum Implementation
 function twoSum(nums, target) {
-    // A nested loop means O(N) * O(N) = O(N^2) Time Complexity
+    const map = new Map(); // O(N) space for hash map
+    
     for (let i = 0; i < nums.length; i++) {
-        for (let j = i + 1; j < nums.length; j++) {
-            if (nums[i] + nums[j] === target) {
-                return [i, j];
-            }
+        const complement = target - nums[i];
+        
+        if (map.has(complement)) {
+            return [map.get(complement), i];
         }
+        
+        map.set(nums[i], i);
     }
+    
     return [];
 }
 
-// Try optimizing this using a Map/Set to see the Linter update!`,
+// Try the naive O(N^2) approach to see linter warnings!`,
         indentUnit: 4,
         matchBrackets: true
     });
