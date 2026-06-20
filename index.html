@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Algo Infinity Verse - Master DSA &amp; Crack Interviews</title>
     <link rel="stylesheet" href="styles.css" />
-    <link rel="stylesheet" href="rust-learning.css" />
+    <link rel="stylesheet" href="/pages/learning/rust-learning.css" />
     <link
       href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&amp;family=Poppins:wght@300;400;500;600;700&amp;family=Fira+Code:wght@400;500;600&amp;display=swap"
       rel="stylesheet"
@@ -22,7 +22,7 @@
       referrerpolicy="no-referrer"
     />
   </head>
-  <body>
+  <body data-page="index">
     <!-- Loading Screen -->
     <div id="loading-screen">
       <div class="loader">
@@ -204,6 +204,8 @@
         </button>
       </div>
     </nav>
+    <!-- Navigation Bar (loaded from partial) -->
+    <div id="navbar-placeholder"></div>
 
     <!-- Hero Section -->
     <section id="home" class="hero">
@@ -235,7 +237,7 @@
             <span class="stat-number" data-target="22">0</span>
             <span class="stat-label">Problems</span>
           </div>
-          <div class="stat-box big-box">
+          <div class="stat-box big-box"> 
             <span class="stat-number" data-target="6">0</span>
             <span class="stat-label">DSA Topics</span>
           </div>
@@ -353,7 +355,9 @@
           <div class="rust-editor-panel">
             <div class="panel-header">
               <h2>Editor</h2>
-              <label for="rustExampleSelect" class="visually-hidden">Choose a Rust example</label>
+              <label for="rustExampleSelect" class="visually-hidden"
+                >Choose a Rust example</label
+              >
               <select id="rustExampleSelect">
                 <option value="hello">Hello World</option>
                 <option value="ownership">Ownership & Borrowing</option>
@@ -362,7 +366,9 @@
               </select>
             </div>
 
-            <label for="rustEditor" class="visually-hidden">Rust code editor</label>
+            <label for="rustEditor" class="visually-hidden"
+              >Rust code editor</label
+            >
             <textarea id="rustEditor" spellcheck="false"></textarea>
 
             <div class="rust-actions">
@@ -403,6 +409,16 @@
           <span class="title-icon">🛤️</span>
           Learning Roadmap
         </h2>
+        
+        <div style="display: flex; justify-content: center; gap: 15px; margin-bottom: 2.5rem; flex-wrap: wrap;">
+            <a href="/pages/learning/algorithm-universe/algorithm-universe.html" class="btn btn-primary" style="display: flex; align-items: center; gap: 8px;">
+                <i class="fas fa-project-diagram"></i> Interactive Universe Map
+            </a>
+            <a href="/pages/tools/personalized-learning-path/personalized-learning-path.html" class="btn btn-secondary" style="display: flex; align-items: center; gap: 8px;">
+                <i class="fas fa-route"></i> Personalized Learning Path
+            </a>
+        </div>
+
         <div class="roadmap-container">
           <div class="roadmap-progress">
             <div class="progress-bar"></div>
@@ -547,7 +563,9 @@
               Master the STAR method and answer behavioral questions confidently
             </p>
             <a
-              href="behavioral-questions.html" class="card-btn" aria-label="Start learning behavioral questions"
+              href="behavioral-questions.html"
+              class="card-btn"
+              aria-label="Start learning behavioral questions"
               style="
                 text-decoration: none;
                 display: inline-block;
@@ -563,7 +581,11 @@
             </div>
             <h3>Technical Interviews</h3>
             <p>Whiteboard coding practice and problem-solving strategies</p>
-            <button class="card-btn" data-category="technical" aria-label="Start learning technical interviews">
+            <button
+              class="card-btn"
+              data-category="technical"
+              aria-label="Start learning technical interviews"
+            >
               Start Learning
             </button>
           </div>
@@ -594,7 +616,9 @@
             <h3>System Design</h3>
             <p>Learn to design scalable systems and architecture</p>
             <a
-              href="system-design.html" class="card-btn" aria-label="Start learning system design"
+              href="system-design.html"
+              class="card-btn"
+              aria-label="Start learning system design"
               style="
                 text-decoration: none;
                 display: inline-block;
@@ -613,7 +637,9 @@
               Quick reference guides with complexity tables and code templates
             </p>
             <a
-              href="cheat-sheets.html" class="card-btn" aria-label="Start learning DSA cheat sheets"
+              href="cheat-sheets.html"
+              class="card-btn"
+              aria-label="Start learning DSA cheat sheets"
               style="
                 text-decoration: none;
                 display: inline-block;
@@ -625,15 +651,21 @@
           </div>
           <div class="interview-card">
             <div class="card-icon">
-                <i class="fas fa-file-alt"></i>
-             </div>
+              <i class="fas fa-file-alt"></i>
+            </div>
 
-                   <h3>Resume Tips</h3>
+            <h3>Resume Tips</h3>
 
-                  <p> Learn resume structure, ATS-friendly formatting, project presentation, and placement preparation.</p>
+            <p>
+              Learn resume structure, ATS-friendly formatting, project
+              presentation, and placement preparation.
+            </p>
 
-                  <a href="resume-tips.html" class="card-btn" aria-label="Start learning resume tips"
-                  style="
+            <a
+              href="resume-tips.html"
+              class="card-btn"
+              aria-label="Start learning resume tips"
+              style="
                 text-decoration: none;
                 display: inline-block;
                 text-align: center;
@@ -641,6 +673,17 @@
                     Start Learning
                     </a>
               </div>
+              <div class="interview-card">
+            <div class="card-icon">
+              <i class="fas fa-sword"></i>
+            </div>
+            <h3>Algorithm Arena</h3>
+            <p>Watch algorithms battle head-to-head with live visualizations and real-time performance metrics.</p>
+            <a href="algorithm-arena.html" class="card-btn" aria-label="Enter Algorithm Gladiator Arena"
+              style="text-decoration: none; display: inline-block; text-align: center;">
+              Enter Arena
+            </a>
+          </div>
         </div>
       </div>
     </section>
@@ -670,7 +713,9 @@
               </div>
               <button
                 class="profile-edit-btn"
-                id="profileEditBtn" title="Edit Profile" aria-label="Edit Profile"
+                id="profileEditBtn"
+                title="Edit Profile"
+                aria-label="Edit Profile"
               >
                 <i class="fas fa-pen"></i>
               </button>
@@ -863,6 +908,44 @@
           </button>
         </div>
         <div class="game-modal-body" id="gameModalBody">
+          <!-- Level Selection Screen -->
+          <div id="levelSelector" style="display: none">
+            <div
+              style="display: flex; align-items: center; margin-bottom: 1.5rem"
+            >
+              <button
+                class="btn btn-outline"
+                onclick="showGameTypeSelector()"
+                style="font-size: 0.85rem; padding: 0.4rem 0.8rem"
+              >
+                ← Back to Game Modes
+              </button>
+              <h4
+                style="
+                  flex: 1;
+                  text-align: center;
+                  color: var(--accent);
+                  margin: 0;
+                "
+              >
+                Choose Your Game Mode
+              </h4>
+            </div>
+            <div class="level-selection-grid" id="levelSelectionGrid">
+              <!-- Generated by JS -->
+            </div>
+            <p
+              style="
+                text-align: center;
+                margin-top: 1rem;
+                color: var(--text-secondary);
+                font-size: 0.85rem;
+              "
+            >
+              🔒 Locked levels unlock as you earn more XP!
+            </p>
+          </div>
+
           <!-- Game Type Selector -->
           <div id="gameTypeSelector">
             <h4
@@ -893,7 +976,63 @@
                 <p>Guess the Big O of code snippets</p>
                 <span class="game-xp-reward">+15 XP per correct</span>
               </div>
+              <div class="game-type-card" onclick="startGame('memory')">
+                <div class="game-type-icon">🧠</div>
+                <h4>Memory Game</h4>
+                <p>Match DSA concepts with definitions</p>
+                <span class="game-xp-reward">+25 XP per match</span>
+              </div>
+              <div class="game-type-card" onclick="startGame('code')">
+                <div class="game-type-icon">✍️</div>
+                <h4>Code Completion</h4>
+                <p>Fill in the missing code from options</p>
+                <span class="game-xp-reward">+30 XP per correct</span>
+              </div>
             </div>
+
+            <!-- Topic & Difficulty Info -->
+            <div class="game-level-info" id="gameLevelInfo">
+              <span id="gameLevelTopic">📚 Topic: Arrays</span>
+              <span id="gameLevelDifficulty">⚡ Difficulty: Easy</span>
+            </div>
+          </div>
+
+          <!-- Memory Game Area -->
+          <div id="memoryGameArea" style="display: none">
+            <div class="game-stats-bar">
+              <span class="game-stat"
+                >⏱️ <span id="memoryTimer">60</span>s</span
+              >
+              <span class="game-stat"
+                >✅ Matches: <span id="memoryMatches">0</span></span
+              >
+              <span class="game-stat"
+                >🎯 Moves: <span id="memoryMoves">0</span></span
+              >
+            </div>
+            <div class="memory-grid" id="memoryGrid"></div>
+          </div>
+
+          <!-- Code Completion Area -->
+          <div id="codeGameArea" style="display: none">
+            <div class="game-stats-bar">
+              <span class="game-stat">⏱️ <span id="codeTimer">30</span>s</span>
+              <span class="game-stat"
+                >✅ Score: <span id="codeScore">0</span></span
+              >
+              <span class="game-stat"
+                >❓ Q: <span id="codeQuestion">1</span>/5</span
+              >
+            </div>
+            <div class="code-game-area">
+              <div class="code-snippet" id="codeSnippet"></div>
+              <div class="code-options-grid" id="codeOptionsGrid"></div>
+            </div>
+            <div
+              class="game-explanation"
+              id="codeExplanation"
+              style="display: none"
+            ></div>
           </div>
 
           <!-- Game Play Area -->
@@ -1016,7 +1155,13 @@
         <div class="modal-header">
           <div class="step-badge-tag" id="roadmapStepBadge">Step 1</div>
           <h3 id="roadmapStepModalTitle">Introduction to DSA</h3>
-          <button class="modal-close" id="roadmapStepModalClose" aria-label="Close roadmap step modal">&times;</button>
+          <button
+            class="modal-close"
+            id="roadmapStepModalClose"
+            aria-label="Close roadmap step modal"
+          >
+            &times;
+          </button>
         </div>
         <div class="modal-body">
           <div class="roadmap-step-theory">
@@ -1204,7 +1349,11 @@
             <span class="quiz-difficulty" id="topicQuizDifficulty">Medium</span>
           </div>
           <h3 id="topicQuizTitle">Topic Quiz</h3>
-          <button class="modal-close" id="topicQuizModalClose" aria-label="Close quiz modal">
+          <button
+            class="modal-close"
+            id="topicQuizModalClose"
+            aria-label="Close quiz modal"
+          >
             <i class="fas fa-times"></i>
           </button>
         </div>
@@ -1259,7 +1408,13 @@
       <div class="modal-content profile-edit-modal">
         <div class="modal-header">
           <h3>Edit Profile</h3>
-          <button class="modal-close" id="profileModalClose" aria-label="Close edit profile modal">&times;</button>
+          <button
+            class="modal-close"
+            id="profileModalClose"
+            aria-label="Close edit profile modal"
+          >
+            &times;
+          </button>
         </div>
         <div class="modal-body">
           <div class="profile-edit-form">
@@ -1313,7 +1468,9 @@
             </div>
             <button
               class="profile-edit-btn"
-              id="profileSectionEditBtn" title="Edit Profile" aria-label="Edit Profile"
+              id="profileSectionEditBtn"
+              title="Edit Profile"
+              aria-label="Edit Profile"
             >
               <i class="fas fa-pen"></i>
             </button>
@@ -1354,6 +1511,21 @@
                 <div class="progress-fill" id="profileProgressBar"></div>
               </div>
             </div>
+            <div class="account-actions">
+              <button id="changePasswordBtn" class="btn btn-secondary">
+  <i class="fas fa-key"></i>
+  Change Password
+</button>
+              <button id="deactivateAccountBtn" class="btn btn-danger">
+                <i class="fas fa-user-slash"></i>
+                Deactivate Account
+              </button>
+              <button id="deleteAccountBtn" class="btn btn-danger">
+    <i class="fas fa-trash"></i>
+    Delete Account
+  </button>
+</div>
+            </div>
           </div>
         </div>
       </div>
@@ -1370,7 +1542,11 @@
         <div class="modal-header">
           <h3 id="notesModalTitle">Problem Notes</h3>
 
-          <button class="modal-close" id="notesModalClose" aria-label="Close notes modal">
+          <button
+            class="modal-close"
+            id="notesModalClose"
+            aria-label="Close notes modal"
+          >
             <i class="fas fa-times"></i>
           </button>
         </div>
@@ -1396,114 +1572,77 @@
       </div>
     </div>
 
-    <!-- Footer -->
-    <footer class="footer">
-      <div class="container">
-        <div class="footer-content">
-          <div class="footer-section">
-            <h3>∞ Algo Infinity Verse</h3>
-            <p>
-              Your ultimate destination for mastering Data Structures &amp;
-              Algorithms and acing technical interviews.
-            </p>
-            <div class="social-links">
-              <a href="#" aria-label="GitHub"><i class="fa-brands fa-github"></i></a>
-              <a href="#" aria-label="Twitter"><i class="fa-brands fa-x-twitter"></i></a>
-              <a href="#" aria-label="LinkedIn"><i class="fa-brands fa-linkedin"></i></a>
-              <a href="#" aria-label="YouTube"><i class="fa-brands fa-youtube"></i></a>
-            </div>
-          </div>
-          <div class="footer-section">
-            <h4>Quick Links</h4>
-            <ul>
-              <li><a href="#topics">DSA Topics</a></li>
-              <li><a href="binary-search.html">Learn Binary Search</a></li>
-              <li><a href="#practice">Practice Problems</a></li>
-              <li><a href="#roadmap">Learning Roadmap</a></li>
-              <li><a href="#interview">Interview Prep</a></li>
-              <li><a href="#rust-learning">Rust Playground</a></li>
-            </ul>
-          </div>
-          <div class="footer-section">
-            <h4>Resources</h4>
-            <ul>
-              <li><a href="#">Documentation</a></li>
-              <li><a href="#">Blog</a></li>
-              <li><a href="community.html">Community</a></li>
-              <li><a href="support-page/index.html">Support</a></li>
-              <li><a href="feedback.html">Feedback</a></li>
-              <li><a href="about-us.html">About us</a></li>
-              <li><a href="privacy-policy.html">Privacy</a></li>
-            </ul>
-          </div>
-          <div class="footer-section">
-            <h4>Quick Questions</h4>
-            <div class="footer-questions">
-              <button
-                class="footer-question"
-                data-question="What is the time complexity of this problem?"
-              >
-                Time Complexity
-              </button>
-              <button
-                class="footer-question"
-                data-question="Can you give me a hint for this problem?"
-              >
-                Hint
-              </button>
-              <button
-                class="footer-question"
-                data-question="What approach should I use?"
-              >
-                Approach
-              </button>
-              <button
-                class="footer-question"
-                data-question="Are there any edge cases I should consider?"
-              >
-                Edge Cases
-              </button>
-            </div>
-          </div>
-          <div class="footer-section">
-            <h4>Newsletter</h4>
-            <p>Subscribe to get weekly problem sets and tips</p>
-            <form class="newsletter-form">
-              <label class="sr-only" for="newsletterEmail">Email address</label>
-              <input
-                type="email"
-                id="newsletterEmail"
-                placeholder="Your email"
-                autocomplete="email"
-                aria-describedby="newsletter-error"
-                aria-invalid="false"
-              />
-              <button type="submit" aria-label="Subscribe to newsletter"><i class="fas fa-paper-plane"></i></button>
-              <span
-                class="newsletter-error"
-                id="newsletter-error"
-                role="alert"
-                aria-live="polite"
-              ></span>
-            </form>
-          </div>
-        </div>
-        <div class="footer-bottom">
-          <p>
-            <span
-              >&copy; <span id="footer-current-year"></span> Algo Infinity
-              Verse. Crafted with 💜 for learners worldwide.</span
-            >
-            <br />
-            <span class="footer-current-date" id="footer-current-date"></span>
-          </p>
-        </div>
+    <div class="modal" id="changePasswordModal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3>Change Password</h3>
+      <button
+        class="modal-close"
+        id="changePasswordClose"
+        aria-label="Close"
+      >
+        &times;
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <div class="profile-edit-form">
+
+        <label for="currentPassword">
+          Current Password
+        </label>
+
+        <input
+          type="password"
+          id="currentPassword"
+          placeholder="Enter current password"
+        />
+
+        <label for="newPassword">
+          New Password
+        </label>
+
+        <input
+          type="password"
+          id="newPassword"
+          placeholder="Enter new password"
+        />
+
+        <label for="confirmNewPassword">
+          Confirm New Password
+        </label>
+
+        <input
+          type="password"
+          id="confirmNewPassword"
+          placeholder="Confirm new password"
+        />
+
+        <p id="changePasswordMessage"></p>
+
       </div>
-    </footer>
-    <!-- Back To Top Button -->
-    <button id="backToTopBtn" class="back-to-top" aria-label="Back to Top">
-      <i class="fas fa-arrow-up"></i>
-    </button>
+    </div>
+
+    <div class="modal-footer">
+      <button
+        class="btn btn-secondary"
+        id="cancelPasswordChange"
+      >
+        Cancel
+      </button>
+
+      <button
+        class="btn btn-primary"
+        id="savePasswordBtn"
+      >
+        Change Password
+      </button>
+    </div>
+  </div>
+</div>
+
+    <!-- Footer -->
+    <div id="footer-placeholder"></div>
 
     <!-- Auth Gate Modal -->
     <div
@@ -1561,10 +1700,17 @@
       </div>
     </div>
 
-    <script src="rust-learning.js"></script>
+    <script src="/pages/learning/rust-learning.js"></script>
     <script src="auth.js"></script>
     <script src="script.js?v=20260601"></script>
     <script src="theme.js"></script>
     <script src="auth-gate.js"></script>
+
+    <script>
+      loadPartial("navbar-placeholder", "/partials/navbar.html").then(() => {
+        if (typeof initNavbar === "function") initNavbar();
+      });
+      loadPartial("footer-placeholder", "/partials/footer.html");
+    </script>
   </body>
 </html>
