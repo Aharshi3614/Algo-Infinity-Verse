@@ -1,4 +1,10 @@
 // Contributors Data (will be fetched from API)
+// Contributor Data & UI logic. For dynamic GitHub fetching, contributors/index.html
+// already loads GitHub data in-page and opens a modal profile with full details.
+// If you prefer a separate profile page instead of a modal, replace the modal
+// redirect in contributors/index.html with: `window.location.href='profile.html?username=' + username;`
+// and update this file to read from the query param there.
+
 const contributorsData = [
     {
         id: 1,
@@ -43,6 +49,9 @@ function renderLeaderboard(contributors) {
     
     const ranks = ['🥇', '🥈', '🥉'];
     
+
+    const ranks = ['1', '2', '3'];
+
     leaderboardEl.innerHTML = top3.map((contributor, index) => `
         <div class="leaderboard-item" onclick="viewProfile('${contributor.username}')">
             <span class="leaderboard-rank">${ranks[index] || `#${index + 1}`}</span>
@@ -58,6 +67,11 @@ function renderLeaderboard(contributors) {
                 </div>
             </div>
             ${contributor.badges.includes('Gold') ? '<span style="font-size:1.2rem">⭐</span>' : ''}
+                    <span> ${contributor.contributions} contributions</span>
+                    <span> ${contributor.prs} PRs</span>
+                    <span> ${contributor.issues} issues</span>
+                </div>
+            </div>
         </div>
     `).join('');
 }
@@ -66,6 +80,9 @@ function renderLeaderboard(contributors) {
 function renderContributors(contributors) {
     const grid = document.getElementById('contributorsGrid');
     
+function renderContributors(contributors) {
+    const grid = document.getElementById('contributorsGrid');
+
     grid.innerHTML = contributors.map(contributor => `
         <div class="contributor-card" onclick="viewProfile('${contributor.username}')">
             <div class="contributor-avatar">
@@ -102,6 +119,10 @@ function viewProfile(username) {
 }
 
 // Initialize
+function viewProfile(username) {
+    window.location.href = `profile.html?username=${username}`;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     renderLeaderboard(contributorsData);
     renderContributors(contributorsData);
