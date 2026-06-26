@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Code Playground</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/monokai.min.css">
+    <style>
+        body { font-family: Arial; padding: 20px; background: #f0f2f5; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { color: #7c3aed; }
+        .controls { display: flex; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+        .controls select, .controls button { padding: 8px 16px; border-radius: 6px; border: 1px solid #ddd; }
+        .controls button { background: #7c3aed; color: white; border: none; cursor: pointer; }
+        .controls button:hover { background: #6d28d9; }
+        .CodeMirror { height: 300px; border-radius: 8px; overflow: hidden; }
+        .output { background: #1a1a2e; color: #e4e4e4; padding: 15px; border-radius: 8px; margin-top: 10px; min-height: 60px; font-family: monospace; white-space: pre-wrap; }
+        .error { color: #ef4444; }
+        .success { color: #22c55e; }
+        .info { color: #60a5fa; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💻 Code Playground</h1>
+        <div class="controls">
+            <select id="lang">
+                <option value="javascript">JavaScript</option>
+                <option value="python">Python</option>
+                <option value="java">Java</option>
+                <option value="cpp">C++</option>
+            </select>
+            <button id="runBtn">▶ Run</button>
+            <button id="templateBtn">📄 Load Template</button>
+            <button id="clearBtn">🗑️ Clear</button>
+        </div>
+        <textarea id="editor"></textarea>
+        <div class="output" id="output">Run your code to see output here...</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+    <script>
+        const templates = {
+            javascript: `function solve(input) {\n  console.log(input);\n  return input;\n}`,
+            python: `def solve(input):\n    print(input)\n    return input`,
+            java: `public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello");\n    }\n}`,
+            cpp: `#include <iostream>\nusing namespace std;\nint main() {\n    cout << "Hello" << endl;\n    return 0;\n}`
+        };
+
+        const editor = CodeMirror.fromTextArea(document.getElementById('editor'), {
+            mode: 'javascript',
+            theme: 'monokai',
+            lineNumbers: true,
+            autoCloseBrackets: true,
+            tabSize: 2,
+        });
+
+        document.getElementById('lang').addEventListener('change', function() {
+            const modeMap = { javascript: 'javascript', python: 'python', java: 'text/x-java', cpp: 'text/x-c++src' };
+            editor.setOption('mode', modeMap[this.value]);
+        });
+
+        document.getElementById('templateBtn').addEventListener('click', () => {
+            editor.setValue(templates[document.getElementById('lang').value]);
+        });
+
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            editor.setValue('');
+            document.getElementById('output').textContent = 'Cleared. Write your code and run.';
+        });
+
+        document.getElementById('runBtn').addEventListener('click', async function() {
+            const output = document.getElementById('output');
+            output.textContent = 'Running...';
+            this.disabled = true;
+
+            try {
+                const start = performance.now();
+                const code = editor.getValue();
+                const lang = document.getElementById('lang').value;
+
+                if (lang === 'javascript') {
+                    const logs = [];
+                    const origLog = console.log;
+                    console.log = (...args) => logs.push(args.join(' '));
+                    try {
+                        const result = new Function(`"use strict";\n${code}\nreturn solve();`)();
+                        console.log = origLog;
+                        output.innerHTML = `<span class="info">📤 Output:</span>\n${logs.join('\n')}\n\n<span class="success">✅ Result: ${result !== undefined ? result : 'Done'}</span>`;
+                    } catch(e) {
+                        console.log = origLog;
+                        output.innerHTML = `<span class="error">❌ ${e.message}</span>`;
+                    }
+                } else {
+                    const res = await fetch('https://emkc.org/api/v2/piston/execute', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ language: lang, version: '*', files: [{ content: code }] })
+                    });
+                    const data = await res.json();
+                    if (data.run) {
+                        const out = data.run.stdout || data.run.output || 'Done';
+                        output.innerHTML = `<span class="info">📤 Output:</span>\n${out}`;
+                    } else {
+                        output.innerHTML = `<span class="error">❌ ${data.message || 'Error'}</span>`;
+                    }
+                }
+
+                const time = (performance.now() - start).toFixed(2);
+                output.innerHTML += `\n\n⏱️ ${time}ms`;
+            } catch(e) {
+                output.innerHTML = `<span class="error">❌ ${e.message}</span>`;
+            }
+            this.disabled = false;
+        });
+
+        // Keyboard shortcut: Ctrl+Enter to run
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('runBtn').click();
+            }
+        });
+
+        // Load initial template
+        editor.setValue(templates.javascript);
+    </script>
+</body>
+</html>
+    
