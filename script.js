@@ -3082,7 +3082,6 @@ async function runPerl() {
 }
 
 
-
 // Inject Report Issue Feature on educational pages
 document.addEventListener('DOMContentLoaded', () => {
   const path = window.location.pathname;
@@ -3093,3 +3092,60 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+
+// ===== KEYBOARD SHORTCUTS =====
+document.addEventListener('keydown', function(e) {
+    // Ctrl+K: Focus search
+    if (e.ctrlKey && e.key === 'k') {
+        e.preventDefault();
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) searchInput.focus();
+    }
+    
+    // Alt+H: Home
+    if (e.altKey && e.key === 'h') {
+        e.preventDefault();
+        window.location.href = '#home';
+    }
+    
+    // Alt+T: Topics
+    if (e.altKey && e.key === 't') {
+        e.preventDefault();
+        window.location.href = '#topics';
+    }
+    
+    // Alt+P: Practice
+    if (e.altKey && e.key === 'p') {
+        e.preventDefault();
+        window.location.href = '#practice';
+    }
+    
+    // Alt+Q: Quiz
+    if (e.altKey && e.key === 'q') {
+        e.preventDefault();
+        window.location.href = '#quiz';
+    }
+    
+    // Alt+D: Dashboard
+    if (e.altKey && e.key === 'd') {
+        e.preventDefault();
+        window.location.href = '#dashboard';
+    }
+    
+    // Escape: Close modal
+    if (e.key === 'Escape') {
+        closeShortcutModal();
+    }
+});
+
+// Open shortcut modal
+function openShortcutModal() {
+    const modal = document.getElementById('shortcutModal');
+    if (modal) modal.style.display = 'flex';
+}
+
+// Close shortcut modal
+function closeShortcutModal() {
+    const modal = document.getElementById('shortcutModal');
+    if (modal) modal.style.display = 'none';
+}
