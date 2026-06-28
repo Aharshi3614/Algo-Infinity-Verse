@@ -3573,11 +3573,11 @@ function closeShortcutModal() {
 
 // ===== DID YOU KNOW? FACTS =====
 const facts = [
-    "The first computer programmer was Ada Lovelace in the 1840s",
-    "The term 'bug' was coined when a moth got stuck in a computer in 1947",
     "The first computer virus, called 'Creeper', was created in 1971",
+    "The term 'bug' was coined when a moth got stuck in a computer in 1947",
     "The first algorithm was written over 4,000 years ago by Babylonians",
     "There are over 700 programming languages in use today",
+    "The first computer programmer was Ada Lovelace in the 1840s",
     "Google processes over 3.5 billion searches per day",
     "The first website is still online (info.cern.ch)",
     "Python is named after Monty Python, not the snake",
@@ -3590,8 +3590,6 @@ const facts = [
     "There are more than 1.5 billion websites on the internet"
 ];
 
-let currentFactIndex = 0;
-
 function getDailyFact() {
     const today = new Date().toDateString();
     let hash = 0;
@@ -3600,52 +3598,25 @@ function getDailyFact() {
         hash = hash & hash;
     }
     const index = Math.abs(hash) % facts.length;
-    currentFactIndex = index;
     return facts[index];
 }
 
 function showNextFact() {
-    let newIndex;
-    do {
-        newIndex = Math.floor(Math.random() * facts.length);
-let factTransitionTimer;
-
-function showNextFact() {
-    let nextIndex = Math.floor(Math.random() * facts.length);
-    if (facts.length > 1) {
-        while (nextIndex === currentFactIndex) {
-            nextIndex = Math.floor(Math.random() * facts.length);
-        }
-    }
-    currentFactIndex = nextIndex;
     const factText = document.getElementById('factText');
-    const factCounter = document.getElementById('factCounter');
+    const factDate = document.getElementById('factDate');
     
-    factText.style.opacity = '0';
-    clearTimeout(factTransitionTimer);
-    factTransitionTimer = setTimeout(() => {
-        factText.textContent = facts[nextIndex];
-        factCounter.textContent = `${nextIndex + 1}/${facts.length}`;
-        factText.style.opacity = '1';
-    }, 200);
+    const randomIndex = Math.floor(Math.random() * facts.length);
+    factText.textContent = facts[randomIndex];
+    factDate.textContent = `💡 Fun fact #${randomIndex + 1}`;
 }
 
 function showDailyFact() {
     const factText = document.getElementById('factText');
     const factDate = document.getElementById('factDate');
-    const factCounter = document.getElementById('factCounter');
     
-    const dailyFact = getDailyFact();
-    factText.textContent = dailyFact;
-    factCounter.textContent = `${currentFactIndex + 1}/${facts.length}`;
-    
-    const today = new Date().toLocaleDateString('en-US', {
-        weekday: 'short',
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
-    });
-    factDate.textContent = `📅 ${today}`;
+    factText.textContent = getDailyFact();
+    const today = new Date().toLocaleDateString();
+    factDate.textContent = `📅 Fact of the day • ${today}`;
 }
 
 // Initialize on page load
