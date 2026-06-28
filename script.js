@@ -3608,15 +3608,24 @@ function showNextFact() {
     let newIndex;
     do {
         newIndex = Math.floor(Math.random() * facts.length);
-    } while (newIndex === currentFactIndex && facts.length > 1);
-    currentFactIndex = newIndex;
+let factTransitionTimer;
+
+function showNextFact() {
+    let nextIndex = Math.floor(Math.random() * facts.length);
+    if (facts.length > 1) {
+        while (nextIndex === currentFactIndex) {
+            nextIndex = Math.floor(Math.random() * facts.length);
+        }
+    }
+    currentFactIndex = nextIndex;
     const factText = document.getElementById('factText');
     const factCounter = document.getElementById('factCounter');
     
     factText.style.opacity = '0';
-    setTimeout(() => {
-        factText.textContent = facts[currentFactIndex];
-        factCounter.textContent = `${currentFactIndex + 1}/${facts.length}`;
+    clearTimeout(factTransitionTimer);
+    factTransitionTimer = setTimeout(() => {
+        factText.textContent = facts[nextIndex];
+        factCounter.textContent = `${nextIndex + 1}/${facts.length}`;
         factText.style.opacity = '1';
     }, 200);
 }
