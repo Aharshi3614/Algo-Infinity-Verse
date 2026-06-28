@@ -31,6 +31,18 @@ class AbortManager {
 
 const apiAbort = new AbortManager();
 
+
+// ===== LOAD PARTIALS =====
+function loadPartial(elementId, filePath) {
+    fetch(filePath)
+        .then(response => response.text())
+        .then(data => {
+            document.getElementById(elementId).innerHTML = data;
+        })
+        .catch(error => console.error('Error loading partial:', error));
+}
+
+
 // ============================================
 // CACHE MANAGER (IndexedDB)
 // ============================================

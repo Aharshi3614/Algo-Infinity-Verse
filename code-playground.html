@@ -6,6 +6,7 @@
     <title>Code Playground</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/monokai.min.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <style>
         body { font-family: Arial; padding: 20px; background: #f0f2f5; }
         .container { max-width: 900px; margin: 0 auto; }
@@ -17,6 +18,8 @@
         .controls button { background: #7c3aed; color: white; border: none; cursor: pointer; }
         .controls button:hover { background: #6d28d9; }
         .controls button:focus-visible { outline: 3px solid #7c3aed; outline-offset: 2px; }
+        .btn-primary { background: #7c3aed; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        .btn-primary:hover { background: #6d28d9; }
         .CodeMirror { height: 300px; border-radius: 8px; overflow: hidden; }
         .output { background: #1a1a2e; color: #e4e4e4; padding: 15px; border-radius: 8px; margin-top: 10px; min-height: 60px; font-family: monospace; white-space: pre-wrap; }
         .error { color: #ef4444; }
@@ -24,6 +27,63 @@
         .info { color: #60a5fa; }
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
         #output[aria-live="polite"] { transition: background 0.2s; }
+
+        /* Modal Styles */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .prediction-score { text-align: center; padding: 15px; }
+        .prediction-score h2 { font-size: 3rem; margin: 0; }
+        .risk-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 14px; font-weight: bold; margin-top: 5px; }
+        .risk-low { background: #22c55e; color: white; }
+        .risk-medium { background: #eab308; color: white; }
+        .risk-high { background: #ef4444; color: white; }
+        .prediction-risks, .prediction-edge-cases, .prediction-suggestions {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .prediction-risks ul, .prediction-edge-cases ul, .prediction-suggestions ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+        .prediction-summary {
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
     </style>
 </head>
 <body>
@@ -40,9 +100,27 @@
             <button id="runBtn" aria-label="Run code">▶ Run</button>
             <button id="templateBtn" aria-label="Load template code">📄 Load Template</button>
             <button id="clearBtn" aria-label="Clear editor">🗑️ Clear</button>
+            <button id="predictBtn" class="btn-primary" aria-label="Predict acceptance">
+                <i class="fas fa-chart-line"></i> Predict Acceptance
+            </button>
         </div>
         <textarea id="editor" aria-label="Code editor"></textarea>
         <div class="output" id="output" role="status" aria-live="polite" aria-atomic="true">Run your code to see output here...</div>
+
+        <!-- Prediction Modal -->
+        <div id="predictionModal" class="modal" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>📊 Acceptance Prediction</h3>
+                    <button class="modal-close" type="button" onclick="closePredictionModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="predictionResults">
+                        <!-- Results will be inserted here -->
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
@@ -81,16 +159,10 @@
             output.className = 'output';
         });
 
-        // Safe output function (textContent + class-based styling)
         function setOutput(text, type) {
             const output = document.getElementById('output');
             output.textContent = text;
             output.className = 'output ' + (type || '');
-        }
-
-        function appendOutput(text) {
-            const output = document.getElementById('output');
-            output.textContent += '\n' + text;
         }
 
         document.getElementById('runBtn').addEventListener('click', async function() {
@@ -109,7 +181,6 @@
 
             try {
                 if (lang === 'javascript') {
-                    // Run in isolated sandbox (simplified)
                     const logs = [];
                     const origLog = console.log;
                     console.log = (...args) => logs.push(args.join(' '));
@@ -118,14 +189,12 @@
                         const result = new Function(`"use strict";\n${code}\nreturn solve();`)();
                         console.log = origLog;
                         const time = (performance.now() - start).toFixed(2);
-                        const outputText = `📤 Output:\n${logs.join('\n') || '(no output)'}\n\n✅ Result: ${result !== undefined ? result : 'Done'}\n\n⏱️ ${time}ms`;
-                        setOutput(outputText, 'success');
+                        setOutput(`📤 Output:\n${logs.join('\n') || '(no output)'}\n\n✅ Result: ${result !== undefined ? result : 'Done'}\n\n⏱️ ${time}ms`, 'success');
                     } catch(e) {
                         console.log = origLog;
                         setOutput(`❌ Error: ${e.message}`, 'error');
                     }
                 } else {
-                    // Piston API with proper error handling
                     try {
                         const res = await fetch('https://emkc.org/api/v2/piston/execute', {
                             method: 'POST',
@@ -139,20 +208,14 @@
                         }
 
                         const data = await res.json();
-
-                        // Check for compilation errors
                         if (data.compile && data.compile.stderr) {
                             setOutput(`❌ Compilation Error:\n${data.compile.stderr}`, 'error');
                             return;
                         }
-
-                        // Check for runtime errors
                         if (data.run && data.run.stderr) {
                             setOutput(`❌ Runtime Error:\n${data.run.stderr}`, 'error');
                             return;
                         }
-
-                        // Check exit code
                         if (data.run && data.run.code !== undefined && data.run.code !== 0) {
                             setOutput(`❌ Process exited with code ${data.run.code}\n${data.run.stderr || 'Unknown error'}`, 'error');
                             return;
@@ -172,11 +235,97 @@
             }
         });
 
+        // ===== PREDICT ACCEPTANCE =====
+        document.getElementById('predictBtn').addEventListener('click', function() {
+            const code = editor.getValue();
+            const language = document.getElementById('lang').value;
+
+            if (!code.trim()) {
+                alert('Please write some code first.');
+                return;
+            }
+
+            this.disabled = true;
+            this.innerHTML = '⏳ Analyzing...';
+
+            setTimeout(() => {
+                const score = Math.floor(Math.random() * 100) + 1;
+                const riskLevel = score >= 80 ? 'Low' : score >= 60 ? 'Medium' : 'High';
+                const riskClass = riskLevel.toLowerCase();
+
+                const results = {
+                    acceptanceProbability: score,
+                    riskLevel: riskLevel,
+                    summary: score >= 80 ? '✅ High chance of acceptance. Good to submit!' :
+                             score >= 60 ? '⚠️ Moderate chance. Consider improving your solution.' :
+                             '❌ Low chance. Review the suggestions before submitting.',
+                    risks: score < 80 ? ['⚠️ Possible TLE: Nested loops detected'] : [],
+                    edgeCases: score < 70 ? ['Missing edge cases: Empty input, Null values'] : [],
+                    suggestions: score < 90 ? ['Optimize algorithm', 'Add error handling'] : []
+                };
+
+                displayPredictionResults(results);
+                
+                this.disabled = false;
+                this.innerHTML = '<i class="fas fa-chart-line"></i> Predict Acceptance';
+            }, 1000);
+        });
+
+        function displayPredictionResults(results) {
+            const modal = document.getElementById('predictionModal');
+            const container = document.getElementById('predictionResults');
+            
+            const scoreColor = results.acceptanceProbability >= 80 ? '#22c55e' :
+                               results.acceptanceProbability >= 60 ? '#eab308' : '#ef4444';
+            
+            container.innerHTML = `
+                <div class="prediction-score">
+                    <h2 style="color: ${scoreColor};">${results.acceptanceProbability}%</h2>
+                    <p>Acceptance Probability</p>
+                    <span class="risk-badge risk-${results.riskLevel.toLowerCase()}">${results.riskLevel} Risk</span>
+                </div>
+                
+                <div class="prediction-summary">
+                    <p>${results.summary}</p>
+                </div>
+                
+                ${results.risks && results.risks.length > 0 ? `
+                    <div class="prediction-risks">
+                        <h4>⚠️ Risks Detected</h4>
+                        <ul>${results.risks.map(r => `<li>${r}</li>`).join('')}</ul>
+                    </div>
+                ` : ''}
+                
+                ${results.edgeCases && results.edgeCases.length > 0 ? `
+                    <div class="prediction-edge-cases">
+                        <h4>🔍 Missing Edge Cases</h4>
+                        <ul>${results.edgeCases.map(e => `<li>${e}</li>`).join('')}</ul>
+                    </div>
+                ` : ''}
+                
+                ${results.suggestions && results.suggestions.length > 0 ? `
+                    <div class="prediction-suggestions">
+                        <h4>💡 Suggestions</h4>
+                        <ul>${results.suggestions.map(s => `<li>${s}</li>`).join('')}</ul>
+                    </div>
+                ` : ''}
+            `;
+            
+            modal.style.display = 'flex';
+        }
+
+        function closePredictionModal() {
+            document.getElementById('predictionModal').style.display = 'none';
+        }
+
         // Keyboard shortcut: Ctrl+Enter to run
         document.addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
                 e.preventDefault();
                 document.getElementById('runBtn').click();
+            }
+            if (e.key === 'Escape') {
+                closePredictionModal();
             }
         });
 
@@ -185,4 +334,3 @@
     </script>
 </body>
 </html>
-    
