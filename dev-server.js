@@ -25,8 +25,9 @@ const b64 = (s) => Buffer.from(s, 'utf-8').toString('base64');
 const d64 = (s) => s ? Buffer.from(s, 'base64').toString('utf-8') : '';
 
 async function pollSubmission(token) {
+  const safeToken = encodeURIComponent(token);
   for (let i = 0; i < MAX_POLLS; i++) {
-    const resp = await fetch(`${JUDGE0}/submissions/${token}?base64_encoded=true`);
+    const resp = await fetch(`${JUDGE0}/submissions/${safeToken}?base64_encoded=true`);
     if (!resp.ok) throw new Error(`Judge0 poll error: ${await resp.text()}`);
     const data = await resp.json();
     if (data.status && data.status.id >= 3) return data;
@@ -40,14 +41,34 @@ app.use(cors());
 app.use(express.json());
 
 app.post('/api/execute', async (req, res) => {
+  // Validate request body size via Content-Length header
+  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+  if (contentLength > 100000) { // 100KB limit
+    return res.status(413).json({ error: 'Payload too large. Request body must be under 100KB.' });
+  }
+
   const { source_code, language, stdin = '' } = req.body;
-  const language_id = req.body.language_id ?? LANGUAGE_IDS[language?.toLowerCase()];
+
+  // Validate required fields and constraints
+  if (!language || typeof language !== 'string') {
+    return res.status(400).json({ error: 'language is required and must be a string' });
+  }
+  if (!source_code || typeof source_code !== 'string') {
+    return res.status(400).json({ error: 'source_code is required and must be a string' });
+  }
+  if (typeof stdin !== 'string') {
+    return res.status(400).json({ error: 'stdin must be a string' });
+  }
+
+  const MAX_CODE_LENGTH = 50000; // 50KB
+  if (source_code.length > MAX_CODE_LENGTH) {
+    return res.status(400).json({ error: `source_code exceeds maximum length of ${MAX_CODE_LENGTH} characters.` });
+  }
+
+  const language_id = req.body.language_id ?? LANGUAGE_IDS[language.toLowerCase()];
 
   if (!language_id) {
     return res.status(400).json({ error: `Unsupported language: ${language}` });
-  }
-  if (!source_code) {
-    return res.status(400).json({ error: 'source_code is required' });
   }
 
   try {
@@ -66,6 +87,9 @@ app.post('/api/execute', async (req, res) => {
 
     const { token } = await submitResp.json();
     if (!token) return res.status(500).json({ error: 'Judge0 did not return a token' });
+    if (typeof token !== 'string' || !/^[a-zA-Z0-9-]+$/.test(token)) {
+      return res.status(500).json({ error: 'Invalid token format received' });
+    }
 
     const data = await pollSubmission(token);
 
