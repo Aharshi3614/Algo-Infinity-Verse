@@ -1345,10 +1345,26 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
       payload = await readJsonBody(req);
     } catch (err) {
       return sendJson(res, 400, { error: "Invalid JSON body." });
+    let payload;
+    try {
+      payload = await readJsonBody(req);
+    } catch (err) {
+      return sendJson(res, 400, { error: "Invalid JSON body." });
+    }
+
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return sendJson(res, 400, { error: "JSON object body required." });
     }
 
     const { feedbackType, subject, message } = payload;
-    if (!feedbackType || !subject || !message) {
+    if (
+      typeof feedbackType !== "string" ||
+      typeof subject !== "string" ||
+      typeof message !== "string" ||
+      !feedbackType.trim() ||
+      !subject.trim() ||
+      !message.trim()
+    ) {
       return sendJson(res, 400, {
         error: "Feedback type, subject, and message are required.",
       });
@@ -1367,11 +1383,6 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     if (subject.trim().length < 3) {
       return sendJson(res, 400, {
         error: "Subject must be at least 3 characters long.",
-      });
-    }
-    if (subject.trim().length > 100) {
-      return sendJson(res, 400, {
-        error: "Subject must be at most 100 characters long.",
       });
     }
 
