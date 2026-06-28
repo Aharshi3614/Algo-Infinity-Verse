@@ -1369,10 +1369,20 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
         error: "Subject must be at least 3 characters long.",
       });
     }
+    if (subject.trim().length > 100) {
+      return sendJson(res, 400, {
+        error: "Subject must be at most 100 characters long.",
+      });
+    }
 
     if (message.trim().length < 10) {
       return sendJson(res, 400, {
         error: "Message must be at least 10 characters long.",
+      });
+    }
+    if (message.trim().length > 1000) {
+      return sendJson(res, 400, {
+        error: "Message must be at most 1000 characters long.",
       });
     }
 
