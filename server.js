@@ -46,8 +46,30 @@ import {
   getHistory,
 } from "./pages/Dsa-Battle/Battleservice.js";
 
-const upload = multer({ storage: multer.memoryStorage() }).single("resume");
-const uploadCsv = multer({ storage: multer.memoryStorage() }).single("csv");
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+}).single("resume");
+const uploadCsv = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 } // 2MB limit
+}).single("csv");
+
+function validateMagicBytes(buffer, mimeType) {
+  if (!buffer || buffer.length < 4) return false;
+  const hex = buffer.slice(0, 4).toString("hex").toUpperCase();
+  
+  if (mimeType === "application/pdf") {
+    return hex === "25504446";
+  }
+  if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    return hex === "504B0304";
+  }
+  if (mimeType === "application/msword") {
+    return hex === "D0CF11E0";
+  }
+  return false;
+}
 const userSocketMap = new Map();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -409,6 +431,9 @@ async function handleApi(req, res, pathname) {
   
   if (pathname === "/api/execute" && req.method === "POST") {
     try {
+     
+      const payload = await readJsonBody(req);
+      const { sourceCode, language, stdin } = payload;
       const session = getSession(req);
       if (!session) {
         return sendJson(res, 401, {
@@ -680,6 +705,19 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, 400, { error: "No resume file uploaded." });
       }
 
+      const allowedMimeTypes = [
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword"
+      ];
+      if (!allowedMimeTypes.includes(req.file.mimetype)) {
+        return sendJson(res, 400, { error: "Unsupported file type. Upload PDF or DOCX." });
+      }
+
+      if (!validateMagicBytes(req.file.buffer, req.file.mimetype)) {
+        return sendJson(res, 400, { error: "File content mismatch. The uploaded file's content does not match its type." });
+      }
+
       const text = await extractResumeText(req.file);
       const atsScore = calculateATS(text);
       const missingSkills = findMissingSkills(text);
@@ -859,6 +897,12 @@ async function handleApi(req, res, pathname) {
 
 if (pathname === "/api/session" && req.method === "GET") {
     const session = getSession(req);
+    
+    
+    if (!session) {
+      return sendJson(res, 200, { authenticated: false, user: null });
+    }
+    
     if (!session) {
       return sendJson(res, 200, { authenticated: false, user: null });
     }
@@ -1336,35 +1380,27 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     );
   }
 
-
-
-      if (pathname === "/api/feedback" && req.method === "POST") {
+  if (pathname === "/api/feedback" && req.method === "POST") {
     const session = getSession(req);
     let payload;
     try {
       payload = await readJsonBody(req);
     } catch (err) {
       return sendJson(res, 400, { error: "Invalid JSON body." });
-    let payload;
-    try {
-      payload = await readJsonBody(req);
-    } catch (err) {
-      return sendJson(res, 400, { error: "Invalid JSON body." });
-    }
-
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      return sendJson(res, 400, { error: "JSON object body required." });
     }
 
     const { feedbackType, subject, message } = payload;
     if (
       typeof feedbackType !== "string" ||
       typeof subject !== "string" ||
-      typeof message !== "string" ||
-      !feedbackType.trim() ||
-      !subject.trim() ||
-      !message.trim()
+      typeof message !== "string"
     ) {
+      return sendJson(res, 400, {
+        error: "Feedback type, subject, and message must be strings.",
+      });
+    }
+
+    if (!feedbackType.trim() || !subject.trim() || !message.trim()) {
       return sendJson(res, 400, {
         error: "Feedback type, subject, and message are required.",
       });
@@ -1391,9 +1427,146 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
         error: "Message must be at least 10 characters long.",
       });
     }
-    if (message.trim().length > 1000) {
+
+    const feedbackData = {
+      userId: session ? session.sub : null,
+      userName: session ? session.name : null,
+      userEmail: session ? session.email : null,
+      feedbackType,
+      subject: subject.trim(),
+      message: message.trim(),
+      status: "new",
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      if (useFirestore) {
+        const docRef = await db.collection("feedback").add(feedbackData);
+        feedbackData.id = docRef.id;
+      } else {
+        const feedbackFile = path.join(DATA_DIR, "feedback.json");
+        await fs.mkdir(DATA_DIR, { recursive: true });
+        let feedbackList = [];
+        try {
+          const raw = await fs.readFile(feedbackFile, "utf8");
+          feedbackList = JSON.parse(raw || "[]");
+        } catch (err) {
+          if (err.code !== "ENOENT") throw err;
+        }
+        feedbackData.id = crypto.randomUUID();
+        feedbackList.push(feedbackData);
+        await fs.writeFile(
+          feedbackFile,
+          JSON.stringify(feedbackList, null, 2) + "\n",
+        );
+      }
+
+      if (pathname === "/api/feedback" && req.method === "POST") {
+    const session = getSession(req);
+    let payload;
+    try {
+      payload = await readJsonBody(req);
+    } catch (err) {
+      return sendJson(res, 400, { error: "Invalid JSON body." });
+    }
+
+    const { feedbackType, subject, message } = payload;
+    if (!feedbackType || !subject || !message) {
       return sendJson(res, 400, {
-        error: "Message must be at most 1000 characters long.",
+        error: "Feedback type, subject, and message are required.",
+      });
+    }
+
+    const allowedTypes = [
+      "Suggestion",
+      "Bug Report",
+      "Feature Request",
+      "General Feedback",
+    ];
+    if (!allowedTypes.includes(feedbackType)) {
+      return sendJson(res, 400, { error: "Invalid feedback type." });
+    }
+
+    if (subject.trim().length < 3) {
+      return sendJson(res, 400, {
+        error: "Subject must be at least 3 characters long.",
+      });
+    }
+
+    if (message.trim().length < 10) {
+      return sendJson(res, 400, {
+        error: "Message must be at least 10 characters long.",
+      });
+    }
+
+    const feedbackData = {
+      userId: session ? session.sub : null,
+      userName: session ? session.name : null,
+      userEmail: session ? session.email : null,
+      feedbackType,
+      subject: subject.trim(),
+      message: message.trim(),
+      status: "new",
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      if (useFirestore) {
+        const docRef = await db.collection("feedback").add(feedbackData);
+        feedbackData.id = docRef.id;
+      } else {
+        const feedbackFile = path.join(DATA_DIR, "feedback.json");
+        await fs.mkdir(DATA_DIR, { recursive: true });
+        let feedbackList = [];
+        try {
+          const raw = await fs.readFile(feedbackFile, "utf8");
+          feedbackList = JSON.parse(raw || "[]");
+        } catch (err) {
+          if (err.code !== "ENOENT") throw err;
+        }
+        feedbackData.id = crypto.randomUUID();
+        feedbackList.push(feedbackData);
+        await fs.writeFile(
+          feedbackFile,
+          JSON.stringify(feedbackList, null, 2) + "\n",
+        );
+      }
+
+      if (pathname === "/api/feedback" && req.method === "POST") {
+    const session = getSession(req);
+    let payload;
+    try {
+      payload = await readJsonBody(req);
+    } catch (err) {
+      return sendJson(res, 400, { error: "Invalid JSON body." });
+    }
+
+    const { feedbackType, subject, message } = payload;
+    if (!feedbackType || !subject || !message) {
+      return sendJson(res, 400, {
+        error: "Feedback type, subject, and message are required.",
+      });
+    }
+
+    const allowedTypes = [
+      "Suggestion",
+      "Bug Report",
+      "Feature Request",
+      "General Feedback",
+    ];
+    if (!allowedTypes.includes(feedbackType)) {
+      return sendJson(res, 400, { error: "Invalid feedback type." });
+    }
+
+    if (subject.trim().length < 3) {
+      return sendJson(res, 400, {
+        error: "Subject must be at least 3 characters long.",
+      });
+    }
+
+    if (message.trim().length < 10) {
+      return sendJson(res, 400, {
+        error: "Message must be at least 10 characters long.",
       });
     }
 
@@ -2084,6 +2257,22 @@ const routes = {
   return filePath;
 }
 
+function getCacheControlHeader(ext) {
+  if (ext === ".html") {
+    return "no-store, no-cache, must-revalidate, private";
+  }
+  if (ext === ".css" || ext === ".js" || ext === ".json") {
+    return "no-cache, public";
+  }
+  if ([".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp"].includes(ext)) {
+    return "public, max-age=86400";
+  }
+  if ([".woff", ".woff2", ".eot", ".ttf", ".otf"].includes(ext)) {
+    return "public, max-age=2592000, immutable";
+  }
+  return "no-cache";
+}
+
 async function serveStatic(req, res, pathname) {
   const filePath = resolveStaticPath(pathname);
   if (!filePath) {
@@ -2096,14 +2285,58 @@ async function serveStatic(req, res, pathname) {
     const target = stat.isDirectory()
       ? path.join(filePath, "index.html")
       : filePath;
+    
+    const fileStat = await fs.stat(target);
     const ext = path.extname(target);
-    const content = await fs.readFile(target);
+
+    // ETag generation based on file size and mtime
+    const mtimeMs = fileStat.mtime.getTime();
+    const size = fileStat.size;
+    const etag = `W/"${size}-${mtimeMs}"`;
+    const cacheControl = getCacheControlHeader(ext);
+
     const headers = {
-      "Content-Type": mimeTypes[ext] || "application/octet-stream",
       "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "SAMEORIGIN",
+      "X-XSS-Protection": "1; mode=block",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Permissions-Policy": "geolocation=(), camera=(), microphone=()",
+      "Cache-Control": cacheControl,
+      "ETag": etag,
     };
-    // Note: COOP header removed to allow Firebase signInWithPopup to access popup.closed
-    // when opening cross-origin OAuth popups (Google, etc.)
+
+    // Handle If-None-Match conditional request
+    const clientEtag = req.headers["if-none-match"];
+    if (clientEtag === etag) {
+      headers["Content-Type"] = mimeTypes[ext] || "application/octet-stream";
+      res.writeHead(304, headers);
+      return res.end();
+    }
+
+    let content = await fs.readFile(target);
+
+    if (ext === ".html") {
+      // Generate a dynamic nonce for CSP script elements
+      const nonce = crypto.randomBytes(16).toString("base64");
+      
+      // Inject nonce into script tags in the HTML content
+      let htmlStr = content.toString("utf-8");
+      htmlStr = htmlStr.replace(/<script(\s|>)/gi, `<script nonce="${nonce}"$1`);
+      content = Buffer.from(htmlStr, "utf-8");
+
+      headers["Content-Security-Policy"] = 
+        `default-src 'self'; ` +
+        `script-src 'self' 'nonce-${nonce}' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://apis.google.com; ` +
+        `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; ` +
+        `font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; ` +
+        `img-src 'self' data: https: blob:; ` +
+        `connect-src 'self' https: wss:; ` +
+        `frame-src 'self' https://*.firebaseapp.com; ` +
+        `object-src 'none'; ` +
+        `base-uri 'self';`;
+    }
+
+    headers["Content-Type"] = mimeTypes[ext] || "application/octet-stream";
     res.writeHead(200, headers);
     res.end(content);
   } catch {
@@ -2152,7 +2385,63 @@ const io = new SocketIOServer(server);
 io.on("connection", (socket) => {
 console.log("🟢 New client connected:", socket.id);
 
- 
+
+
+
+// ==========================================
+// AI INTERVIEWER - GEMINI API INTEGRATION
+// ==========================================
+socket.on('ai-evaluate-code', async (data = {}) => {
+    // Bot Fix 1: Validate payload first
+    if (typeof data !== 'object' || typeof data.code !== 'string' || typeof data.language !== 'string' || typeof data.problem !== 'string') {
+        return socket.emit('ai-interviewer-feedback', { hint: 'Unable to analyze code right now.' });
+    }
+
+    console.log(`🤖 AI Interviewer analyzing code...`);
+    
+    try {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+            socket.emit('ai-interviewer-feedback', { hint: "Backend Error: GEMINI_API_KEY is missing in .env!" });
+            return;
+        }
+
+        // The Real Gemini Prompt
+        const prompt = `You are an expert FAANG technical interviewer. A candidate is solving the "${data.problem}" problem in ${data.language}.
+        Here is their current code:
+        
+        ${data.code}
+        
+        Your task: Give a short, strategic hint (max 2-3 sentences) to guide them. 
+        CRITICAL RULES:
+        1. Do NOT give the exact code solution. 
+        2. Focus on time/space complexity, pointing out edge cases, or spotting logical flaws.
+        3. Keep the tone encouraging, professional, and directly address the logic in their code.`;
+
+        // Real API Call to Gemini
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }]
+            })
+        });
+
+        const result = await response.json();
+        
+        if (result.candidates && result.candidates.length > 0) {
+            let aiHint = result.candidates[0].content.parts[0].text;
+            aiHint = aiHint.replace(/\*/g, '').replace(/\`/g, ''); // Clean markdown
+            socket.emit('ai-interviewer-feedback', { hint: aiHint });
+        } else {
+            socket.emit('ai-interviewer-feedback', { hint: "Hmm, your logic is interesting... keep going!" });
+        }
+        
+    } catch (error) {
+        console.error("Gemini API Error:", error);
+        socket.emit('ai-interviewer-feedback', { hint: "My AI brain is taking a break. Keep coding!" });
+    }
+});
 
 // Draw events (whiteboard)
 socket.on('draw', (data) => {
@@ -2271,4 +2560,3 @@ if (process.env.VERCEL !== "1" && process.env.NODE_ENV !== "test") {
       process.exit(1);
     });
 }
-
