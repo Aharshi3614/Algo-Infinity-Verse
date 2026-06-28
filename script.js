@@ -3605,7 +3605,11 @@ function getDailyFact() {
 }
 
 function showNextFact() {
-    currentFactIndex = (currentFactIndex + 1) % facts.length;
+    let newIndex;
+    do {
+        newIndex = Math.floor(Math.random() * facts.length);
+    } while (newIndex === currentFactIndex && facts.length > 1);
+    currentFactIndex = newIndex;
     const factText = document.getElementById('factText');
     const factCounter = document.getElementById('factCounter');
     
