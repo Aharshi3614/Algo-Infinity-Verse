@@ -2,7 +2,6 @@ document.addEventListener("DOMContentLoaded", () => {
   initLoadingScreen();
   initNavbar();
   initScrollTop();
-  initDarkMode();
   try { initComplexityCalculator(); } catch(e) { console.error("Complexity Calculator Error:", e); }
 });
 
@@ -18,23 +17,6 @@ function initScrollTop() {
   if (!btn) return;
   window.addEventListener("scroll", () => btn.classList.toggle("visible", window.scrollY > 400));
   btn.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
-}
-
-function initDarkMode() {
-  const toggle = document.getElementById("darkModeToggle");
-  if (!toggle) return;
-  const icon = toggle.querySelector("i");
-  if (localStorage.getItem("darkMode") === "light") {
-    document.body.classList.add("light-mode");
-    icon.classList.replace("fa-moon", "fa-sun");
-  }
-  toggle.addEventListener("click", () => {
-    document.body.classList.toggle("light-mode");
-    const isLight = document.body.classList.contains("light-mode");
-    icon.classList.toggle("fa-moon", !isLight);
-    icon.classList.toggle("fa-sun", isLight);
-    localStorage.setItem("darkMode", isLight ? "light" : "dark");
-  });
 }
 
 function initNavbar() {
@@ -114,6 +96,7 @@ function initComplexityCalculator() {
 
   // Helper for factorial
   function fact(n) {
+    if (n < 0 || !Number.isInteger(n)) return 0;
     if (n > 170) return Infinity; // max safe float limit
     let res = 1;
     for (let i = 2; i <= n; i++) res *= i;
@@ -124,6 +107,7 @@ function initComplexityCalculator() {
   function updateChart() {
     const maxN = parseInt(nSlider.value, 10);
     nValDisplay.textContent = maxN;
+    nSlider.setAttribute("aria-valuenow", maxN);
 
     const labels = [];
     for (let i = 1; i <= maxN; i++) labels.push(i);
@@ -312,7 +296,23 @@ function initComplexityCalculator() {
 
   // Listeners
   nSlider.addEventListener("input", updateChart);
-  Object.values(toggles).forEach(chk => chk.addEventListener("change", updateChart));
+  Object.values(toggles).forEach(chk => {
+    chk.addEventListener("change", () => {
+      const label = chk.closest('label');
+      if (label) label.setAttribute('aria-checked', chk.checked);
+      updateChart();
+    });
+    const label = chk.closest('label');
+    if (label) {
+      label.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          chk.checked = !chk.checked;
+          chk.dispatchEvent(new Event("change"));
+        }
+      });
+    }
+  });
   algoA.addEventListener("change", updateChart);
   algoB.addEventListener("change", updateChart);
 

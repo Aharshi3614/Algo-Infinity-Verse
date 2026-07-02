@@ -2,7 +2,6 @@ document.addEventListener("DOMContentLoaded", () => {
   initLoadingScreen();
   initNavbar();
   initScrollTop();
-  initDarkMode();
   try { initHtmlEditor(); } catch (e) { console.error("HtmlEditor:", e); }
 });
 
@@ -18,23 +17,6 @@ function initScrollTop() {
   if (!btn) return;
   window.addEventListener("scroll", () => btn.classList.toggle("visible", window.scrollY > 400));
   btn.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
-}
-
-function initDarkMode() {
-  const toggle = document.getElementById("darkModeToggle");
-  if (!toggle) return;
-  const icon = toggle.querySelector("i");
-  if (localStorage.getItem("darkMode") === "light") {
-    document.body.classList.add("light-mode");
-    icon.classList.replace("fa-moon", "fa-sun");
-  }
-  toggle.addEventListener("click", () => {
-    document.body.classList.toggle("light-mode");
-    const isLight = document.body.classList.contains("light-mode");
-    icon.classList.toggle("fa-moon", !isLight);
-    icon.classList.toggle("fa-sun", isLight);
-    localStorage.setItem("darkMode", isLight ? "light" : "dark");
-  });
 }
 
 function initNavbar() {
@@ -308,7 +290,7 @@ const HTML_EXAMPLES = {
 </head>
 <body>
   <h2>Sign Up Form</h2>
-  <form onsubmit="alert('Form submitted! (Demo only)'); return false;">
+  <form id="demo-signup-form">
     <label for="name">Full Name</label>
     <input type="text" id="name" placeholder="Alice Johnson" required />
 
@@ -529,6 +511,15 @@ function initHtmlEditor() {
     setTimeout(() => { saveBtn.innerHTML = '<i class="fas fa-save"></i>'; }, 2000);
     logInfo("Code saved to browser storage.");
   });
+
+    const demoForm = document.getElementById("demo-signup-form");
+
+    if (demoForm) {
+        demoForm.addEventListener("submit", (e) => {
+            e.preventDefault();
+            alert("Form submitted! (Demo only)");
+        });
+    }
 
   /* Editor events — only re-render automatically when live preview is on */
   editor.on("change", () => {

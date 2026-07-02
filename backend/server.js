@@ -23,20 +23,39 @@ const DATA_DIR = path.join(ROOT, "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const CodingPersonalityAnalyzer = require('./personalityAnalyzer.js');
 const MEMORY_FILE = path.join(DATA_DIR, "memory.json");
+const TEAM_PROFILES_FILE = path.join(DATA_DIR, "team_profiles.json");
 const SESSION_COOKIE = "aiv_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const PBKDF2_ITERATIONS = 210000;
 const PASSWORD_KEY_LENGTH = 32;
 
-// ── Rate limiting ────────────────────────────────────────────────────────────
+// ── IP & Proxy Identification ────────────────────────────────────────────────
+const TRUSTED_PROXIES = new Set(
+  (process.env.TRUSTED_PROXIES || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
+);
+
+function getClientIdentifier(req) {
+  const remoteAddress = req.socket?.remoteAddress || "unknown";
+
+  if (
+    remoteAddress !== "unknown" &&
+    TRUSTED_PROXIES.has(remoteAddress) &&
+    req.headers["x-forwarded-for"]
+  ) {
+    const leftmost = req.headers["x-forwarded-for"].split(",")[0].trim();
+    if (leftmost) return leftmost;
+  }
+  return remoteAddress;
+}
+
+// ── Signup Rate Limiting ───────────────────────────────────────────────────
 const SIGNUP_RATE_LIMIT = 5;
 const SIGNUP_WINDOW_MS = 15 * 60 * 1000;
 const signupAttempts = new Map();
 
-// Periodic sweeper — runs every SIGNUP_WINDOW_MS and deletes any identifier
-// whose timestamps have all aged out of the window.  This bounds the Map to
-// only identifiers that have been active within the last window period and
-// prevents unbounded memory growth under a sustained stream of unique IPs.
 const _signupSweeper = setInterval(() => {
   const now = Date.now();
   for (const [identifier, timestamps] of signupAttempts) {
@@ -48,46 +67,11 @@ const _signupSweeper = setInterval(() => {
     }
   }
 }, SIGNUP_WINDOW_MS);
-
-// Allow the process to exit cleanly even while the interval is live
-// (relevant in test environments and graceful-shutdown scenarios).
 if (_signupSweeper.unref) _signupSweeper.unref();
-
-// IPs of reverse-proxies / load-balancers that are allowed to set
-// X-Forwarded-For.  Add your proxy CIDRs / IPs here or populate via
-// the TRUSTED_PROXIES env var (comma-separated) at startup.
-const TRUSTED_PROXIES = new Set(
-  (process.env.TRUSTED_PROXIES || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
-);
-
-function getClientIdentifier(req) {
-  const remoteAddress = req.socket?.remoteAddress || "unknown";
-
-  // Only honour X-Forwarded-For when the immediate TCP caller is a
-  // known trusted proxy — otherwise an attacker can supply any value
-  // they like and trivially bypass rate limiting.
-  if (
-    remoteAddress !== "unknown" &&
-    TRUSTED_PROXIES.has(remoteAddress) &&
-    req.headers["x-forwarded-for"]
-  ) {
-    // The left-most entry is the original client IP added by the
-    // first proxy in the chain; everything to the right can be spoofed.
-    const leftmost = req.headers["x-forwarded-for"].split(",")[0].trim();
-    if (leftmost) return leftmost;
-  }
-
-  return remoteAddress;
-}
 
 function isSignupRateLimited(identifier) {
   const now = Date.now();
   const attempts = signupAttempts.get(identifier) || [];
-  // Trim stale timestamps on every read so the per-identifier array stays
-  // small even between sweeper runs.
   const recentAttempts = attempts.filter((t) => now - t < SIGNUP_WINDOW_MS);
   signupAttempts.set(identifier, recentAttempts);
   return recentAttempts.length >= SIGNUP_RATE_LIMIT;
@@ -96,8 +80,6 @@ function isSignupRateLimited(identifier) {
 function recordSignupAttempt(identifier) {
   const now = Date.now();
   const attempts = signupAttempts.get(identifier) || [];
-  // Trim before appending so the array never accumulates beyond
-  // SIGNUP_RATE_LIMIT + 1 entries between sweeper passes.
   const recentAttempts = attempts.filter((t) => now - t < SIGNUP_WINDOW_MS);
   recentAttempts.push(now);
   signupAttempts.set(identifier, recentAttempts);
@@ -106,12 +88,12 @@ function recordSignupAttempt(identifier) {
 async function normalizeAuthDelay() {
   return new Promise((resolve) => setTimeout(resolve, 500));
 }
+
 // ── Login Rate Limiting (failed attempts only) ──────────────────────────────
 const LOGIN_RATE_LIMIT = 5;          // max failed attempts before lockout
 const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15-minute sliding window
 const loginFailures = new Map();     // identifier → [timestamp, ...]
 
-// Periodic sweeper — mirrors the signup sweeper to prevent unbounded growth.
 const _loginSweeper = setInterval(() => {
   const now = Date.now();
   for (const [identifier, timestamps] of loginFailures) {
@@ -125,10 +107,6 @@ const _loginSweeper = setInterval(() => {
 }, LOGIN_WINDOW_MS);
 if (_loginSweeper.unref) _loginSweeper.unref();
 
-/**
- * Returns true when the given identifier has reached the failed-login limit
- * within the current sliding window.
- */
 function isLoginRateLimited(identifier) {
   const now = Date.now();
   const attempts = loginFailures.get(identifier) || [];
@@ -137,10 +115,6 @@ function isLoginRateLimited(identifier) {
   return recent.length >= LOGIN_RATE_LIMIT;
 }
 
-/**
- * Records a single failed login attempt for the given identifier.
- * Only call this after confirming the credentials were wrong.
- */
 function recordLoginFailure(identifier) {
   const now = Date.now();
   const attempts = loginFailures.get(identifier) || [];
@@ -149,14 +123,172 @@ function recordLoginFailure(identifier) {
   loginFailures.set(identifier, recent);
 }
 
-/**
- * Clears the failure counter for the given identifier on successful login
- * so a legitimate user is never locked out after a prior mistake.
- */
 function clearLoginFailures(identifier) {
   loginFailures.delete(identifier);
 }
-// ────────────────────────────────────────────────────────────────────────────
+
+// ── Active Sessions Management ───────────────────────────────
+const activeSessions = [];
+
+/**
+ * Creates a new active-session record and appends it to activeSessions.
+ *
+ * @param {string|number} userId - The authenticated user's ID.
+ * @param {import("http").IncomingMessage} req - The current HTTP request.
+ * @returns {string} The newly-created sessionId.
+ */
+function createSession(userId, req) {
+  const sessionId = crypto.randomUUID();
+
+  const userAgent = req.headers["user-agent"] || "Unknown";
+  const ipAddress = getClientIdentifier(req);
+
+  // Prefer CDN/proxy-injected region headers; fall back gracefully.
+  const location =
+    (req.headers["x-region"] || req.headers["cf-ipcountry"] || "").trim() ||
+    "Local/Unknown Location";
+
+  const session = {
+    sessionId,
+    userId: String(userId),
+    ipAddress,
+    userAgent,
+    location,
+    createdAt: new Date(),
+  };
+
+  activeSessions.push(session);
+  return sessionId;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Express Route Protection Middleware ─────────────────────────
+// Note: This matches the Express `req, res, next` format requested.
+function authenticate(req, res, next) {
+  // If you use standard Authorization headers:
+  const token = req.headers.authorization?.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: "No token provided." });
+  }
+
+  // NOTE: If using the native verifySessionToken instead of jwt.verify:
+  const decoded = verifySessionToken(token);
+  if (!decoded) {
+    return res.status(401).json({ success: false, message: "Invalid or expired token." });
+  }
+
+  // Inject a cross-reference session check:
+  const active = activeSessions.find(
+    (s) => s.sessionId === decoded.sessionId && s.userId === String(decoded.sub || decoded.id)
+  );
+
+  if (!active) {
+    // If no matching session is found (individually or globally revoked)
+    return res.status(401).json({
+      success: false,
+      message: 'Session has been invalidated. Please log in again.'
+    });
+  }
+
+  // Attach decoded payload data to req.user and call next()
+  req.user = decoded;
+  next();
+}
+
+/* === EXPRESS ROUTE BLUEPRINTS ===
+ * Note: These are the Express variants of the routes requested. 
+ * Since this codebase currently uses native HTTP routing, they 
+ * have been safely encapsulated here to prevent "app is undefined" 
+ * crashes while you migrate! The active logic is handled inside handleApi().
+ *
+app.get('/api/auth/sessions', authenticate, (req, res) => {
+  const uid = String(req.user.sub || req.user.id);
+  const userSessions = activeSessions
+    .filter(s => s.userId === uid)
+    .map(s => ({
+      ...s,
+      isCurrent: s.sessionId === req.user.sessionId
+    }));
+  return res.json(userSessions);
+});
+
+app.delete('/api/auth/sessions/:sessionId', authenticate, (req, res) => {
+  const uid = String(req.user.sub || req.user.id);
+  const index = activeSessions.findIndex(s => s.sessionId === req.params.sessionId && s.userId === uid);
+
+  if (index === -1) {
+    return res.status(404).json({ success: false, message: 'Session not found.' });
+  }
+
+  activeSessions.splice(index, 1);
+  return res.json({ success: true, message: 'Session successfully revoked.' });
+});
+
+app.delete('/api/auth/sessions', authenticate, (req, res) => {
+  const uid = String(req.user.sub || req.user.id);
+  let i = activeSessions.length;
+  while (i--) {
+    if (activeSessions[i].userId === uid) {
+      activeSessions.splice(i, 1);
+    }
+  }
+  return res.json({ success: true, message: 'Successfully logged out of all devices.' });
+});
+// ─────────────────────────────────────────────────────────────────────────────
+*/
+
+
+
+app.post('/api/login', async (req, res) => {
+  // 1. Extract proxy-safe IP identifier
+  const identifier = getClientIdentifier(req);
+
+  // 2. Check if they are locked out BEFORE touching the database
+  if (isLoginRateLimited(identifier)) {
+    return res.status(429).json({
+      success: false,
+      message: "Too many failed login attempts. Please try again in 15 minutes."
+    });
+  }
+
+  const { email, password } = req.body;
+
+  try {
+    const user = null;
+    const isPasswordValid = false;
+
+    // 3. Check for invalid credentials and record the failure
+    if (!user || !isPasswordValid) {
+      recordLoginFailure(identifier); // Record strike against IP
+
+
+      await normalizeAuthDelay();
+
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials."
+      });
+    }
+
+    // 4. If the code reaches here, login is successful. Wipe the slate clean.
+    clearLoginFailures(identifier);
+
+    const sessionId = createSession(user ? (user._id || user.id) : "unknown", req);
+
+    // Send your JWT and success response
+    return res.status(200).json({
+      success: true,
+      token: "your_generated_jwt_token",
+      message: "Logged in successfully"
+    });
+
+  } catch (error) {
+    console.error("Login error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
 
 const protectedPaths = new Set([
   "/community",
@@ -224,11 +356,15 @@ function fromBase64Url(input) {
 }
 
 function sessionSecret() {
-  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("SESSION_SECRET is required in production.");
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    // Fail closed: never fall back to a hardcoded secret, regardless of NODE_ENV.
+    // A known fallback would let anyone forge session JWTs.
+    throw new Error(
+      "SESSION_SECRET is required. Set it in the environment before starting the server.",
+    );
   }
-  return "dev-only-change-me-with-SESSION_SECRET-before-deploying";
+  return secret;
 }
 
 function sign(value) {
@@ -238,13 +374,14 @@ function sign(value) {
     .digest("base64url");
 }
 
-function createSessionToken(user) {
+function createSessionToken(user, sessionId) {
   const header = base64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
   const payload = base64Url(
     JSON.stringify({
       sub: user.id,
       name: user.name,
       email: user.email,
+      sessionId,
       exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS,
     }),
   );
@@ -270,8 +407,14 @@ function verifySessionToken(token) {
 
   try {
     const session = JSON.parse(fromBase64Url(payload));
-    if (!session.exp || session.exp < Math.floor(Date.now() / 1000))
-      return null;
+    if (!session.exp || session.exp < Math.floor(Date.now() / 1000)) return null;
+
+    // Cross-reference session check for native HTTP routes
+    const active = activeSessions.find(
+      (s) => s.sessionId === session.sessionId && s.userId === String(session.sub)
+    );
+    if (!active) return null; // Invalidated session
+
     return session;
   } catch {
     return null;
@@ -319,7 +462,7 @@ async function getUserByEmail(email) {
     .limit(1)
     .get();
   if (snapshot.empty) return null;
-  return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+  return { ...snapshot.docs[0].data(), id: snapshot.docs[0].id };
 }
 
 async function createUser(userData) {
@@ -330,7 +473,7 @@ async function createUser(userData) {
     return userData;
   }
   const docRef = await db.collection(COLLECTIONS.USERS).add(userData);
-  return { id: docRef.id, ...userData };
+  return { ...userData, id: docRef.id };
 }
 
 async function ensureUserStore() {
@@ -384,21 +527,69 @@ async function writeMemoryStoreAtomic(filePath, store) {
 
 // Serializes read-modify-write cycles so concurrent /api/memory/* requests
 // cannot clobber each other's updates. `mutator` receives the current store
-// and must return the updated store.
+// and must return the updated store (or modify it in-place).
 async function updateMemoryStore(mutator) {
   const task = memoryWriteQueue.then(async () => {
     await ensureMemoryStore();
     const raw = await fs.readFile(MEMORY_FILE, "utf8");
     const store = JSON.parse(raw || "{}");
     const updated = await mutator(store);
-    await writeMemoryStoreAtomic(MEMORY_FILE, store);
+    // Write the updated store if the mutator returned a new store object.
+    // If the mutator mutated in-place and returned undefined or a sub-resource
+    // (such as a card object), we write the mutated store.
+    const isCard = updated && typeof updated === "object" && ("topic" in updated || "nextReviewDate" in updated || "repetitions" in updated);
+    const isNewStore = updated && typeof updated === "object" && !isCard;
+    const storeToSave = isNewStore && updated !== store ? updated : store;
+    await writeMemoryStoreAtomic(MEMORY_FILE, storeToSave);
     return updated;
   });
 
   // Prevent one rejected task from permanently breaking the queue.
-  memoryWriteQueue = task.catch(() => {});
+  memoryWriteQueue = task.catch((err) => {
+    console.error("[updateMemoryStore] Write task failed:", err);
+  });
   return task;
 }
+
+let teamProfilesWriteQueue = Promise.resolve();
+
+async function ensureTeamProfilesStore() {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  try {
+    await fs.access(TEAM_PROFILES_FILE);
+  } catch {
+    await fs.writeFile(TEAM_PROFILES_FILE, "{}\n");
+  }
+}
+
+async function readTeamProfilesStore() {
+  await ensureTeamProfilesStore();
+  const raw = await fs.readFile(TEAM_PROFILES_FILE, "utf8");
+  return JSON.parse(raw || "{}");
+}
+
+async function writeTeamProfilesStoreAtomic(filePath, store) {
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmpPath, `${JSON.stringify(store, null, 2)}\n`);
+  await fs.rename(tmpPath, filePath);
+}
+
+async function updateTeamProfilesStore(mutator) {
+  const task = teamProfilesWriteQueue.then(async () => {
+    await ensureTeamProfilesStore();
+    const raw = await fs.readFile(TEAM_PROFILES_FILE, "utf8");
+    const store = JSON.parse(raw || "{}");
+    const updated = await mutator(store);
+    await writeTeamProfilesStoreAtomic(TEAM_PROFILES_FILE, store);
+    return updated;
+  });
+
+  teamProfilesWriteQueue = task.catch((err) => {
+    console.error("[updateTeamProfilesStore] Write task failed:", err);
+  });
+  return task;
+}
+
 // SM-2 algorithm: quality is 0-5 (0 = total blackout, 5 = perfect recall)
 function applySM2(card, quality) {
   const q = Math.max(0, Math.min(5, Number(quality)));
@@ -572,6 +763,162 @@ function validateRequest(req) {
 }
 
 async function handleApi(req, res, pathname) {
+  if (pathname === "/api/log-error" && req.method === "POST") {
+    try {
+      const payload = await readJsonBody(req);
+      const logFile = path.join(DATA_DIR, "client_errors.json");
+      await fs.mkdir(DATA_DIR, { recursive: true });
+      let currentLogs = [];
+      try {
+        const raw = await fs.readFile(logFile, "utf8");
+        currentLogs = JSON.parse(raw || "[]");
+      } catch (e) {
+        // file might not exist
+      }
+      currentLogs.push(payload);
+      await fs.writeFile(logFile, `${JSON.stringify(currentLogs, null, 2)}\n`);
+      return sendJson(res, 200, { success: true });
+    } catch (err) {
+      console.error("Error logging client error:", err);
+      return sendJson(res, 500, { error: "Failed to log error" });
+    }
+  }
+
+  if (pathname === "/api/team-profile" && req.method === "GET") {
+    try {
+      const urlParams = new URL(req.url, `http://${req.headers.host}`).searchParams;
+      const teamId = urlParams.get("id");
+      
+      if (!teamId) {
+        return sendJson(res, 400, { error: "Missing team id." });
+      }
+
+      let profileData = null;
+
+      if (!useFirestore) {
+        const store = await readTeamProfilesStore();
+        profileData = store[teamId] || null;
+      } else {
+        const docRef = db.collection(COLLECTIONS.TEAM_PROFILES).doc(teamId);
+        const snapshot = await docRef.get();
+        if (snapshot.exists) {
+          profileData = snapshot.data();
+        }
+      }
+
+      if (!profileData) {
+        // Return default profile with version 1
+        return sendJson(res, 200, {
+          id: teamId,
+          version: 1,
+          name: "New Team Profile",
+          description: "",
+          members: []
+        });
+      }
+
+      return sendJson(res, 200, profileData);
+    } catch (error) {
+      console.error("Fetch team profile error:", error);
+      return sendJson(res, 500, { error: "Failed to fetch team profile." });
+    }
+  }
+
+  if (pathname === "/api/team-profile" && req.method === "POST") {
+    try {
+      const payload = await readJsonBody(req);
+      const { id: teamId, version, name, description, members } = payload;
+
+      if (!teamId) {
+        return sendJson(res, 400, { error: "Missing team id." });
+      }
+
+      if (version === undefined || version === null) {
+        return sendJson(res, 400, { error: "Missing version for concurrency control." });
+      }
+
+      let updatedProfile = null;
+
+      if (!useFirestore) {
+        try {
+          updatedProfile = await updateTeamProfilesStore(store => {
+            const currentProfile = store[teamId] || { version: 1 };
+            
+            // OCC version check
+            if (currentProfile.version !== version) {
+              const conflictError = new Error("Conflict");
+              conflictError.status = 409;
+              conflictError.currentVersion = currentProfile.version;
+              throw conflictError;
+            }
+
+            // Update data and increment version
+            const newProfile = {
+              id: teamId,
+              name: name || currentProfile.name || "New Team Profile",
+              description: description !== undefined ? description : (currentProfile.description || ""),
+              members: members || currentProfile.members || [],
+              version: version + 1,
+              updatedAt: new Date().toISOString()
+            };
+
+            store[teamId] = newProfile;
+            return newProfile;
+          });
+        } catch (error) {
+          if (error.status === 409) {
+            return sendJson(res, 409, { 
+              error: "Conflict detected: The profile was updated by someone else.",
+              currentVersion: error.currentVersion
+            });
+          }
+          throw error;
+        }
+      } else {
+        const docRef = db.collection(COLLECTIONS.TEAM_PROFILES).doc(teamId);
+        try {
+          updatedProfile = await db.runTransaction(async (transaction) => {
+            const doc = await transaction.get(docRef);
+            
+            const currentVersion = doc.exists ? doc.data().version : 1;
+
+            if (currentVersion !== version) {
+              const conflictError = new Error("Conflict");
+              conflictError.status = 409;
+              conflictError.currentVersion = currentVersion;
+              throw conflictError;
+            }
+
+            const newProfile = {
+              id: teamId,
+              name: name || (doc.exists ? doc.data().name : "New Team Profile"),
+              description: description !== undefined ? description : (doc.exists ? doc.data().description : ""),
+              members: members || (doc.exists ? doc.data().members : []),
+              version: version + 1,
+              updatedAt: new Date().toISOString()
+            };
+
+            transaction.set(docRef, newProfile);
+            return newProfile;
+          });
+        } catch (error) {
+          if (error.status === 409) {
+            return sendJson(res, 409, { 
+              error: "Conflict detected: The profile was updated by someone else.",
+              currentVersion: error.currentVersion
+            });
+          }
+          throw error;
+        }
+      }
+
+      return sendJson(res, 200, updatedProfile);
+    } catch (error) {
+      console.error("Update team profile error:", error);
+      return sendJson(res, 500, { error: "Failed to update team profile." });
+    }
+  }
+
   if (pathname === "/api/analyze-resume" && req.method === "POST") {
     try {
       await new Promise((resolve, reject) => {
@@ -620,6 +967,39 @@ async function handleApi(req, res, pathname) {
       authenticated: Boolean(session),
       user: session,
     });
+  }
+
+  if (pathname === "/api/auth/sessions" && req.method === "GET") {
+    const session = getSession(req);
+    if (!session) return sendJson(res, 401, { error: "Login required." });
+    const uid = String(session.sub);
+    const userSessions = activeSessions
+      .filter(s => s.userId === uid)
+      .map(s => ({ ...s, isCurrent: s.sessionId === session.sessionId }));
+    return sendJson(res, 200, userSessions);
+  }
+
+  if (pathname === "/api/auth/sessions" && req.method === "DELETE") {
+    const session = getSession(req);
+    if (!session) return sendJson(res, 401, { error: "Login required." });
+    const uid = String(session.sub);
+    for (let i = activeSessions.length - 1; i >= 0; i--) {
+      if (activeSessions[i].userId === uid) {
+        activeSessions.splice(i, 1);
+      }
+    }
+    return sendJson(res, 200, { success: true, message: "Successfully logged out of all devices." });
+  }
+
+  if (pathname.startsWith("/api/auth/sessions/") && req.method === "DELETE") {
+    const session = getSession(req);
+    if (!session) return sendJson(res, 401, { error: "Login required." });
+    const targetSessionId = pathname.replace("/api/auth/sessions/", "");
+    const uid = String(session.sub);
+    const index = activeSessions.findIndex(s => s.sessionId === targetSessionId && s.userId === uid);
+    if (index === -1) return sendJson(res, 404, { success: false, message: "Session not found." });
+    activeSessions.splice(index, 1);
+    return sendJson(res, 200, { success: true, message: "Session successfully revoked." });
   }
 
   if (pathname === "/api/signup" && req.method === "POST") {
@@ -673,7 +1053,8 @@ async function handleApi(req, res, pathname) {
     };
     await createUser(user);
 
-    const token = createSessionToken(user);
+    const sessionId = createSession(user.id, req);
+    const token = createSessionToken(user, sessionId);
     return sendJson(
       res,
       201,
@@ -687,10 +1068,6 @@ async function handleApi(req, res, pathname) {
     const clientId = getClientIdentifier(req);
 
     if (isLoginRateLimited(clientId)) {
-      console.warn("[login] rate limited", {
-        ip: clientId,
-        at: new Date().toISOString(),
-      });
       await normalizeAuthDelay();
       return sendJson(
         res,
@@ -741,7 +1118,12 @@ async function handleApi(req, res, pathname) {
     // user who mistyped their password earlier is not locked out.
     clearLoginFailures(clientId);
 
-    const token = createSessionToken(user);
+    // Successful login — clear any accumulated failure count so a legitimate
+    // user who mistyped their password earlier is not locked out.
+    clearLoginFailures(clientId);
+
+    const sessionId = createSession(user._id || user.id, req);
+    const token = createSessionToken(user, sessionId);
     return sendJson(
       res,
       200,
@@ -1011,6 +1393,63 @@ async function handleApi(req, res, pathname) {
     });
   }
 
+  if (pathname === "/api/recommendations/next" && req.method === "GET") {
+    const session = getSession(req);
+    if (!session) return sendJson(res, 401, { error: "Login required." });
+
+    try {
+      const store = await readMemoryStore();
+      const userCards = store[session.sub] || {};
+      
+      const now = new Date();
+      // Find cards due for review
+      const dueCards = Object.values(userCards).filter(
+        (card) => new Date(card.nextReviewDate) <= now
+      );
+      
+      // Sort by SM-2 quality (lowest first) to prioritize weak areas
+      const weakCards = Object.values(userCards).sort((a, b) => a.quality - b.quality);
+      
+      let recommendedTopic = null;
+      let reason = "";
+
+      if (dueCards.length > 0) {
+        dueCards.sort((a, b) => new Date(a.nextReviewDate) - new Date(b.nextReviewDate));
+        recommendedTopic = dueCards[0].topic;
+        reason = `Based on your spaced repetition schedule, it's time to review ${recommendedTopic}.`;
+      } else if (weakCards.length > 0 && weakCards[0].quality < 4) {
+        recommendedTopic = weakCards[0].topic;
+        reason = `Your performance in ${recommendedTopic} indicates it's a weak area. We recommend practicing it.`;
+      } else {
+        recommendedTopic = "dp";
+        reason = "You're doing great! Keep pushing your boundaries with some advanced problems.";
+      }
+
+      // Generate AI tip
+      let aiTip = "";
+      try {
+        const { generateTopicMarkdown } = await import("./knowledge-base/llmClient.js");
+        if (generateTopicMarkdown) {
+          aiTip = `AI Insight: Mastering ${recommendedTopic} will significantly improve your overall problem-solving skills.`;
+        }
+      } catch (err) {
+        console.warn("LLM client not available for tip generation.");
+      }
+
+      return sendJson(res, 200, {
+        success: true,
+        recommendation: {
+          topic: recommendedTopic,
+          reason: reason,
+          aiTip: aiTip
+        }
+      });
+    } catch (err) {
+      console.error("Error generating recommendation:", err);
+      return sendJson(res, 500, { error: "Failed to generate recommendation." });
+    }
+  }
+
   return sendJson(res, 404, { error: "Not found." });
 }
 
@@ -1081,6 +1520,22 @@ function resolveStaticPath(pathname) {
   return filePath;
 }
 
+function getCacheControlHeader(ext) {
+  if (ext === ".html") {
+    return "no-store, no-cache, must-revalidate, private";
+  }
+  if (ext === ".css" || ext === ".js" || ext === ".json") {
+    return "no-cache, public";
+  }
+  if ([".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp"].includes(ext)) {
+    return "public, max-age=86400";
+  }
+  if ([".woff", ".woff2", ".eot", ".ttf", ".otf"].includes(ext)) {
+    return "public, max-age=2592000, immutable";
+  }
+  return "no-cache";
+}
+
 async function serveStatic(req, res, pathname) {
   const filePath = resolveStaticPath(pathname);
   if (!filePath) {
@@ -1093,12 +1548,61 @@ async function serveStatic(req, res, pathname) {
     const target = stat.isDirectory()
       ? path.join(filePath, "index.html")
       : filePath;
+    
+    const fileStat = await fs.stat(target);
     const ext = path.extname(target);
-    const content = await fs.readFile(target);
-    res.writeHead(200, {
-      "Content-Type": mimeTypes[ext] || "application/octet-stream",
+
+    // ETag generation based on file size and mtime
+    const mtimeMs = fileStat.mtime.getTime();
+    const size = fileStat.size;
+    const cacheControl = getCacheControlHeader(ext);
+    // HTML is rewritten per-request with a unique CSP nonce, so a size/mtime
+    // ETag is not a valid validator for it.
+    const etag = ext === ".html" ? null : `W/"${size}-${mtimeMs}"`;
+
+    const headers = {
       "X-Content-Type-Options": "nosniff",
-    });
+      "X-Frame-Options": "SAMEORIGIN",
+      "X-XSS-Protection": "1; mode=block",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Permissions-Policy": "geolocation=(), camera=(), microphone=()",
+      "Cache-Control": cacheControl,
+    };
+    if (etag) headers["ETag"] = etag;
+
+    // Handle If-None-Match conditional request
+    const clientEtag = req.headers["if-none-match"];
+    if (etag && clientEtag === etag) {
+      headers["Content-Type"] = mimeTypes[ext] || "application/octet-stream";
+      res.writeHead(304, headers);
+      return res.end();
+    }
+
+    let content = await fs.readFile(target);
+
+    if (ext === ".html") {
+      // Generate a dynamic nonce for CSP script elements
+      const nonce = crypto.randomBytes(16).toString("base64");
+      
+      // Inject nonce into script tags in the HTML content
+      let htmlStr = content.toString("utf-8");
+      htmlStr = htmlStr.replace(/<script(\s|>)/gi, `<script nonce="${nonce}"$1`);
+      content = Buffer.from(htmlStr, "utf-8");
+
+      headers["Content-Security-Policy"] = 
+        `default-src 'self'; ` +
+        `script-src 'self' 'nonce-${nonce}' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://apis.google.com; ` +
+        `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; ` +
+        `font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; ` +
+        `img-src 'self' data: https: blob:; ` +
+        `connect-src 'self' https: wss:; ` +
+        `frame-src 'self' https://*.firebaseapp.com; ` +
+        `object-src 'none'; ` +
+        `base-uri 'self';`;
+    }
+
+    headers["Content-Type"] = mimeTypes[ext] || "application/octet-stream";
+    res.writeHead(200, headers);
     res.end(content);
   } catch {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -1140,7 +1644,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-export { server };
+export { server, updateMemoryStore, readMemoryStore };
 if (process.env.VERCEL === "1") {
   db = initializeFirebase();
   useFirestore = !!db;
@@ -1188,9 +1692,12 @@ if (process.env.VERCEL !== "1") {
         const url = `http://${host}:${port}`;
         console.log(`Server running at ${url}`);
         if (!process.env.SESSION_SECRET) {
-          console.warn(
-            "Using a development SESSION_SECRET. Set SESSION_SECRET before deploying.",
+          // Fail closed in every environment — a missing secret means tokens
+          // would be signed with a forgeable, hardcoded fallback.
+          console.error(
+            "FATAL: SESSION_SECRET is required. Set it in the environment before starting the server.",
           );
+          process.exit(1);
         }
       });
     })

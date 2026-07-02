@@ -2,7 +2,6 @@ document.addEventListener("DOMContentLoaded", () => {
   initLoadingScreen();
   initNavbar();
   initScrollTop();
-  initDarkMode();
   initHeroTyping();
   initStatsAnimation();
   initExerciseToggles();
@@ -27,31 +26,6 @@ function initScrollTop() {
   btn.addEventListener("click", () =>
     window.scrollTo({ top: 0, behavior: "smooth" }),
   );
-}
-
-function initDarkMode() {
-  const toggle = document.getElementById("darkModeToggle");
-  if (!toggle) return;
-  const icon = toggle.querySelector("i");
-  try {
-    if (localStorage.getItem("darkMode") === "light") {
-      document.body.classList.add("light-mode");
-      icon.classList.replace("fa-moon", "fa-sun");
-    }
-  } catch (e) {
-    console.warn("localStorage unavailable:", e);
-  }
-  toggle.addEventListener("click", () => {
-    document.body.classList.toggle("light-mode");
-    const isLight = document.body.classList.contains("light-mode");
-    icon.classList.toggle("fa-moon", !isLight);
-    icon.classList.toggle("fa-sun", isLight);
-    try {
-      localStorage.setItem("darkMode", isLight ? "light" : "dark");
-    } catch (e) {
-      console.warn("Could not save dark mode preference:", e);
-    }
-  });
 }
 
 function initNavbar() {
@@ -269,10 +243,6 @@ function initProgressTracker() {
   if (!fill || !count) return;
 
   let completed = new Set();
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (Array.isArray(saved)) completed = new Set(saved);
-  } catch {}
 
   function updateUI() {
     const pct = Math.round((completed.size / TOTAL_TOPICS) * 100);
@@ -283,8 +253,11 @@ function initProgressTracker() {
 
   updateUI();
 
+  let ready = false;
+
   const observer = new IntersectionObserver(
     (entries) => {
+      if (!ready) return;
       let changed = false;
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
@@ -308,4 +281,10 @@ function initProgressTracker() {
   );
 
   document.querySelectorAll(".js-lesson").forEach((l) => observer.observe(l));
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      ready = true;
+    });
+  });
 }
