@@ -264,7 +264,9 @@ class CircularLinkedList {
 
     render() {
         const visualizer = document.getElementById('visualizer');
+        if(visualizer){
         visualizer.innerHTML = '';
+        }
         
         if (!this.head) {
             visualizer.innerHTML = '<p class="empty-message">🔘 Empty list. Add nodes to visualize!</p>';
@@ -436,6 +438,8 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Initial render
-list.render();
-showMessage('Welcome to Circular Linked List Simulator! 🎯', 'info');
+
+document.addEventListener('DOMContentLoaded', function() {
+    list.render();
+    showMessage('Welcome to Circular Linked List Simulator! 🎯', 'info');
+}); Simulator! 🎯', 'info');
