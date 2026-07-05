@@ -1287,10 +1287,7 @@ function initPracticeSection() {
         aiRecommendBtn.disabled = true;
         
         const res = await fetch("/api/recommendations/next", { credentials: "include" });
-        if (res.status === 401) {
-           alert("Please log in to get AI recommendations.");
-           return;
-        }
+        if (res.status === 401) return;
         const data = await res.json();
         
         if (data.success && data.recommendation) {
@@ -1579,7 +1576,7 @@ function addRecentProblem(problemId) {
   if (!userProgress.recentProblems) userProgress.recentProblems = [];
   userProgress.recentProblems = userProgress.recentProblems.filter(id => id !== problemId);
   userProgress.recentProblems.unshift(problemId);
-  if (userProgress.recentProblems.length > 5) userProgress.recentProblems.pop();
+  if (userProgress.recentProblems.length > 10) userProgress.recentProblems.pop();
   saveUserData();
 }
 
@@ -1613,6 +1610,43 @@ function initRoadmap() {
     const basicTab = document.getElementById("roadmapBasicTab");
     //const advancedTab = document.getElementById("roadmapAdvancedTab");
     const overviewTab = document.getElementById("roadmapOverviewTab");
+    
+    if (basicTab || advancedTab || overviewTab) {
+      if (basicTab) basicTab.addEventListener("click", () => {
+        [basicTab, advancedTab, overviewTab].forEach(t => t && t.classList.remove("active"));
+        basicTab.classList.add("active");
+        ["basicRoadmapContainer","advancedRoadmapContainer","overviewRoadmapContainer"].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.classList.remove("active");
+        });
+        const basic = document.getElementById("basicRoadmapContainer");
+        if (basic) basic.classList.add("active");
+      });
+
+      if (advancedTab) advancedTab.addEventListener("click", () => {
+        [basicTab, advancedTab, overviewTab].forEach(t => t && t.classList.remove("active"));
+        advancedTab.classList.add("active");
+        ["basicRoadmapContainer","advancedRoadmapContainer","overviewRoadmapContainer"].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.classList.remove("active");
+        });
+        const advanced = document.getElementById("advancedRoadmapContainer");
+        if (advanced) advanced.classList.add("active");
+      });
+
+      if (overviewTab) overviewTab.addEventListener("click", () => {
+        [basicTab, advancedTab, overviewTab].forEach(t => t && t.classList.remove("active"));
+        overviewTab.classList.add("active");
+        ["basicRoadmapContainer","advancedRoadmapContainer","overviewRoadmapContainer"].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.classList.remove("active");
+        });
+        const overview = document.getElementById("overviewRoadmapContainer");
+        if (overview) overview.classList.add("active");
+      });
+    }
+    
+    // Close button for step modal
     //if (basicTab && advancedTab && overviewTab) {
     if (basicTab && overviewTab) {
       basicTab.addEventListener("click", () => { basicTab.classList.add("active"); 
@@ -2239,7 +2273,7 @@ async function syncUserProgress() {
   const session = await getAuthenticatedSession();
   if (!session?.authenticated) return;
   try {
-    await fetch("/api/progress", { method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: userProgress.name, xp: userProgress.xp, level: userProgress.level, avatar: userProgress.avatar }) });
+    await fetch("/api/progress", { credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: userProgress.name, xp: userProgress.xp, level: userProgress.level, avatar: userProgress.avatar, activityData: userProgress.activityData }) });
     updateLeaderboard();
   } catch (e) { console.warn("Could not sync user progress:", e); }
 }
@@ -3816,14 +3850,20 @@ document.addEventListener('keydown', function(e) {
 
 // Open shortcut modal
 function openShortcutModal() {
-    const modal = document.getElementById('shortcutModal');
-    if (modal) modal.style.display = 'flex';
+    const modal = document.getElementById('shortcutsModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        document.body.classList.add('modal-open');
+    }
 }
 
 // Close shortcut modal
 function closeShortcutModal() {
-    const modal = document.getElementById('shortcutModal');
-    if (modal) modal.style.display = 'none';
+    const modal = document.getElementById('shortcutsModal');
+    if (modal) {
+        modal.style.display = 'none';
+        document.body.classList.remove('modal-open');
+    }
 }
 
 // ===== DID YOU KNOW? FACTS =====
@@ -3868,6 +3908,12 @@ function showNextFact() {
 function showDailyFact() {
     const factText = document.getElementById('factText');
     const factDate = document.getElementById('factDate');
+    
+    // Add null checks
+    if (!factText || !factDate) {
+        console.warn('Daily fact elements not found');
+        return;
+    }
     
     factText.textContent = getDailyFact();
     const today = new Date().toLocaleDateString();
@@ -4635,90 +4681,6 @@ window.addEventListener('load', () => {
 // ============================================
 
 /**
- * Update the problem count display
- * @param {Array} filteredProblems - Array of filtered problems
- */
-function updateProblemCount(filteredProblems) {
-    // Update visible count
-    const visibleCountEl = document.getElementById('visible-count');
-    if (visibleCountEl) {
-        const total = filteredProblems.length;
-        visibleCountEl.textContent = total;
-    }
-    
-    // Update total count (if separate)
-    const totalCountEl = document.getElementById('total-count');
-    if (totalCountEl) {
-        // This should show total problems before filtering
-        const allProblems = getAllProblems();
-        totalCountEl.textContent = allProblems.length;
-    }
-    
-    // Update the problem count display (legacy)
-    const countElement = document.querySelector('.problem-count');
-    if (countElement) {
-        const total = filteredProblems.length;
-        countElement.textContent = `${total} problem${total !== 1 ? 's' : ''}`;
-    }
-    
-    // Show/hide empty state
-    const emptyState = document.getElementById('emptyState');
-    if (emptyState) {
-        if (filteredProblems.length === 0) {
-            emptyState.classList.remove('hidden');
-        } else {
-            emptyState.classList.add('hidden');
-        }
-    }
-}
-
-/**
- * Get all problems (from your data source)
- * @returns {Array} All practice problems
- */
-function getAllProblems() {
-    // Use your existing problems data
-    return practiceProblems || window.practiceProblems || [];
-}
-
-/**
- * Filter problems based on selected difficulty
- * @param {string} difficulty - 'all', 'easy', 'medium', 'hard'
- * @param {Array} problems - Problems to filter
- * @returns {Array} Filtered problems
- */
-function filterProblemsByDifficulty(difficulty, problems) {
-    if (difficulty === 'all') {
-        return problems;
-    }
-    return problems.filter(problem => 
-        problem.difficulty.toLowerCase() === difficulty.toLowerCase()
-    );
-}
-
-/**
- * Main filter function - handles filtering AND count update
- */
-function filterProblems() {
-    const selectedDifficulty = getSelectedDifficulty();
-    const allProblems = getAllProblems();
-    
-    // Filter problems
-    const filtered = filterProblemsByDifficulty(selectedDifficulty, allProblems);
-    
-    // Render filtered problems
-    renderProblems(filtered);
-    
-    // Update count
-    updateProblemCount(filtered);
-    
-    // Update URL hash if needed (for bookmarking)
-    if (selectedDifficulty !== 'all') {
-        window.location.hash = `filter=${selectedDifficulty}`;
-    }
-}
-
-/**
  * Get filter from URL hash on page load
  */
 const VALID_PROBLEM_FILTERS = new Set(['all', 'easy', 'medium', 'hard', 'favorites']);
@@ -4930,4 +4892,3 @@ function updateProblemCount(filteredProblems) {
         countElement.textContent = `${total} problem${total !== 1 ? 's' : ''}`;
     }
 }
-
