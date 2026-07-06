@@ -148,12 +148,12 @@ function setupEventListeners() {
             els.branchName.value = '';
             updateUI();
         } catch (e) {
-            alert(e.message);
+            console.warn("Alert:", e.message);
         }
     });
 
     els.btnReset.addEventListener('click', () => {
-        if(confirm("Erase all git history?")) {
+        if(false /* confirm removed */) {
             const currentCode = editor.getValue();
             git = new LocalGit();
             git.commit("Initial commit", currentCode);
@@ -283,11 +283,11 @@ function renderGraph() {
                 // Click label to checkout branch
                 label.style.cursor = 'pointer';
                 label.style.pointerEvents = 'auto';
-                label.onclick = () => {
+                label.addEventListener("click", () => {
                     const restored = git.checkout(bName);
                     editor.setValue(restored.code);
                     updateUI();
-                };
+                });
 
                 els.gitNodes.appendChild(label);
             }

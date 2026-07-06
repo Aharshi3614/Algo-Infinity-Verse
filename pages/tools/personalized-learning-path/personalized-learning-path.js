@@ -359,6 +359,11 @@ function buildRoadmap(goal) {
   const container = document.getElementById("roadmapTimeline");
   if (!container) return;
 
+  if (goal === "personalized") {
+    generateDynamicPath();
+    return;
+  }
+
   const topics = PATHS[goal] || [];
   const checked = getChecked(goal);
 
@@ -492,6 +497,11 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll(".goal-card").forEach((c) => c.classList.remove("active"));
       card.classList.add("active");
       activeGoal = card.getAttribute("data-goal");
+      
+      const personalRow = document.getElementById("personalizedInputRow");
+      if (personalRow) {
+        personalRow.style.display = activeGoal === "personalized" ? "flex" : "none";
+      }
     });
   });
 
@@ -526,7 +536,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (resetBtn) {
     resetBtn.addEventListener("click", () => {
       if (!activeGoal) return;
-      if (!confirm(`Reset all progress for the ${activeGoal} path? This cannot be undone.`)) return;
+      if (!false /* confirm removed */) return;
       setChecked(activeGoal, []);
       lastMilestone = 0;
       buildRoadmap(activeGoal);
@@ -568,3 +578,185 @@ document.addEventListener("DOMContentLoaded", () => {
   const elStreak = document.getElementById("streakCount");
   if (elStreak) elStreak.textContent = getStreak();
 });
+
+function generateDynamicPath() {
+  const container = document.getElementById("roadmapTimeline");
+  if (!container) return;
+
+  const categories = ["arrays", "strings", "linkedlist", "trees", "graphs", "dp"];
+  const categoryMetadata = {
+    arrays: { name: "Arrays & Strings", icon: '<i class="fas fa-layer-group" style="color: #a855f7;"></i>', difficulty: "easy", baseHours: 10, link: "/pages/learning/array-learning/array-learning.html", desc: "Traversal, two-pointer, sliding window, sorting" },
+    strings: { name: "String Manipulation", icon: '<i class="fas fa-quote-right" style="color: #38bdf8;"></i>', difficulty: "easy", baseHours: 8, link: "/pages/learning/trie-string-learning/trie-string-learning.html", desc: "Anagrams, palindromes, substring searches, tries" },
+    linkedlist: { name: "Linked Lists", icon: '<i class="fas fa-link" style="color: #22c55e;"></i>', difficulty: "easy", baseHours: 8, link: "/pages/learning/linkedlist-learning/linkedlist-learning.html", desc: "Singly, doubly, circular; reversal & cycle detection" },
+    trees: { name: "Trees & BSTs", icon: '<i class="fas fa-network-wired" style="color: #ec4899;"></i>', difficulty: "medium", baseHours: 10, link: "/pages/learning/trees-learning/trees-learning.html", desc: "Traversals, height, balance, BST operations" },
+    graphs: { name: "Graph Algorithms", icon: '<i class="fas fa-project-diagram" style="color: #6366f1;"></i>', difficulty: "hard", baseHours: 14, link: "/pages/learning/graph-learning/graph-learning.html", desc: "DFS/BFS, Dijkstra, Bellman-Ford, topological sort" },
+    dp: { name: "Dynamic Programming", icon: '<i class="fas fa-brain" style="color: #8b5cf6;"></i>', difficulty: "hard", baseHours: 16, link: "/pages/learning/dp-learning/dp-learning.html", desc: "Memoisation, tabulation, knapsack, LCS, LIS" }
+  };
+
+  const profile = {};
+  categories.forEach(cat => {
+    let totalProbs = 0;
+    let completedProbs = 0;
+    let failureCount = 0;
+    
+    if (typeof practiceProblems !== "undefined") {
+      const probs = practiceProblems.filter(p => p.category.toLowerCase() === cat);
+      totalProbs = probs.length;
+      completedProbs = probs.filter(p => userProgress.completedProblems.includes(p.id)).length;
+    }
+    
+    const reps = userProgress.spacedRepetition || {};
+    for (const pid in reps) {
+      const card = reps[pid];
+      if (card && card.topic === cat && card.lastQuality < 3) {
+        failureCount++;
+      }
+    }
+    
+    const quiz = (userProgress.quizScores && userProgress.quizScores[cat]) || { bestScore: 0 };
+    const avgQuiz = quiz.bestScore || 0;
+    
+    let score = 0;
+    if (completedProbs > 0 || avgQuiz > 0) {
+      const complRatio = totalProbs > 0 ? (completedProbs / totalProbs) : 0.5;
+      score = (complRatio * 60) + (avgQuiz * 0.4);
+      score = Math.max(0, score - (failureCount * 10));
+    } else {
+      score = 0;
+    }
+    
+    profile[cat] = {
+      score: Math.round(score),
+      completed: completedProbs,
+      total: totalProbs,
+      isWeak: score < 50
+    };
+  });
+
+  const weeks = parseInt(document.getElementById("prepWeeksInput")?.value) || 2;
+  const dailyHours = getDailyGoal();
+  const totalHoursLimit = weeks * 7 * dailyHours;
+  const customFocus = (document.getElementById("customRefinementText")?.value || "").trim().toLowerCase();
+
+  // Next-best topic logic
+  const orderedCategories = [...categories].sort((a, b) => {
+    const aFocus = customFocus && categoryMetadata[a].name.toLowerCase().includes(customFocus);
+    const bFocus = customFocus && categoryMetadata[b].name.toLowerCase().includes(customFocus);
+    if (aFocus && !bFocus) return -1;
+    if (bFocus && !aFocus) return 1;
+
+    if (profile[a].isWeak && !profile[b].isWeak) return -1;
+    if (profile[b].isWeak && !profile[a].isWeak) return 1;
+
+    const diffMap = { easy: 1, medium: 2, hard: 3 };
+    return diffMap[categoryMetadata[a].difficulty] - diffMap[categoryMetadata[b].difficulty];
+  });
+
+  // Filter categories to fit timeframe available hours
+  let currentHoursSum = 0;
+  const recommendedCategories = [];
+  
+  for (const cat of orderedCategories) {
+    const hours = categoryMetadata[cat].baseHours;
+    if (currentHoursSum + hours <= totalHoursLimit || recommendedCategories.length === 0) {
+      recommendedCategories.push(cat);
+      currentHoursSum += hours;
+    }
+  }
+
+  // Populate PATHS.personalized dynamically so checkbox listeners can read it
+  PATHS.personalized = recommendedCategories.map((cat, index) => {
+    const meta = categoryMetadata[cat];
+    
+    // Choose recommended problems
+    let problemRecs = [];
+    if (typeof practiceProblems !== "undefined") {
+      const allCatProbs = practiceProblems.filter(p => p.category.toLowerCase() === cat);
+      // Unsolved problems first
+      const unsolved = allCatProbs.filter(p => !userProgress.completedProblems.includes(p.id));
+      problemRecs = unsolved.slice(0, 2);
+      if (problemRecs.length < 2) {
+        const solved = allCatProbs.filter(p => userProgress.completedProblems.includes(p.id));
+        problemRecs = [...problemRecs, ...solved.slice(0, 2 - problemRecs.length)];
+      }
+    }
+
+    const recsHtml = problemRecs.length > 0
+      ? `<div style="margin-top: 0.5rem; font-size: 0.82rem; color: var(--accent);">
+          <i class="fas fa-tasks"></i> Recommended practice: ${problemRecs.map(p => `
+            <a href="javascript:void(0)" onclick="openPracticeFromPath(${p.id})" style="color:var(--accent); font-weight:600; text-decoration:underline; margin-right: 0.4rem;">${p.title}</a>
+          `).join(" ")}
+         </div>`
+      : "";
+
+    // Determine badge status
+    let statusBadge = `<span class="diff-badge easy" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3);">Standard</span>`;
+    if (profile[cat].isWeak) {
+      statusBadge = `<span class="diff-badge hard" style="background:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.3); font-weight:bold;">⚠️ Weak Area Target</span>`;
+    } else if (customFocus && meta.name.toLowerCase().includes(customFocus)) {
+      statusBadge = `<span class="diff-badge medium" style="background:rgba(168,85,247,0.15); color:#a855f7; border:1px solid rgba(168,85,247,0.3); font-weight:bold;">✨ Custom Focus</span>`;
+    }
+
+    return {
+      name: meta.name,
+      icon: meta.icon,
+      difficulty: meta.difficulty,
+      hours: meta.baseHours,
+      link: meta.link,
+      desc: `${meta.desc}${recsHtml}`,
+      statusBadge
+    };
+  });
+
+  // Build the timeline cards
+  const checked = getChecked("personalized");
+  container.innerHTML = "";
+  lastMilestone = Math.floor(checked.length > 0 ? (checked.length / PATHS.personalized.length) * 100 / 25 : 0) * 25;
+
+  PATHS.personalized.forEach((topic, i) => {
+    const isDone = checked.includes(i);
+    const isActive = !isDone && checked.length === i;
+
+    const step = document.createElement("div");
+    step.className = `roadmap-step${isDone ? " completed" : ""}${isActive ? " active" : ""}`;
+    step.setAttribute("data-index", i);
+
+    step.innerHTML = `
+      <div class="step-dot" style="font-size: 1.2rem;">${isDone ? '<i class="fas fa-check" style="color: #fff;" aria-hidden="true" focusable="false"></i>' : '<i class="fas fa-circle" style="color: var(--primary); font-size: 0.6rem;" aria-hidden="true" focusable="false"></i>'}</div>
+      <div class="step-card">
+        <label for="step-${i}" class="step-icon-label" style="cursor: pointer; font-size: 1.8rem; margin-right: 15px; display: flex; align-items: center; justify-content: center; width: 40px;">
+          ${isDone ? '<i class="fas fa-check-circle" style="color: #22c55e;" aria-hidden="true" focusable="false"></i>' : topic.icon}
+        </label>
+        <input type="checkbox" class="step-checkbox" id="step-${i}" ${isDone ? "checked" : ""} aria-label="${topic.name}" style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;">
+        <div class="step-info">
+          <div class="step-name ${isDone ? "done" : ""}">
+            ${topic.name}
+            ${topic.statusBadge}
+            <span class="hours-badge">⏱ ${topic.hours}h</span>
+          </div>
+          <div class="step-desc">${topic.desc}</div>
+        </div>
+        <div class="step-actions">
+          <a href="${topic.link}" class="step-link" target="_blank" rel="noopener">
+            <i class="fas fa-arrow-right"></i>
+            <span>Learn</span>
+          </a>
+        </div>
+      </div>
+    `;
+
+    container.appendChild(step);
+  });
+
+  updateProgress("personalized");
+  attachCheckboxListeners("personalized");
+}
+
+window.openPracticeFromPath = function(problemId) {
+  if (typeof practiceProblems !== "undefined") {
+    const prob = practiceProblems.find(p => p.id === problemId);
+    if (prob && typeof openQuizEditor === "function") {
+      openQuizEditor(prob);
+    }
+  }
+};

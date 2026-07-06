@@ -112,12 +112,6 @@ const {
   logPanel,
   clearLogsBtn
 } = loadRequiredElements();
-const structureTitle = document.getElementById("structureTitle");
-const auxiliaryTitle = document.getElementById("auxiliaryTitle");
-const auxiliaryStructureWrapper = document.getElementById("auxiliaryStructureWrapper");
-const topologicalTape = document.getElementById("topologicalTape");
-const logPanel = document.getElementById("logPanel");
-const clearLogsBtn = document.getElementById("clearLogsBtn");
 
 // Interaction Temp Variables
 let edgeSourceNode = null;
@@ -382,7 +376,7 @@ svg.addEventListener("mousedown", (e) => {
   const y = e.clientY - rect.top;
 
   if (nextLabelCode > 90) {
-    alert("Maximum node limit (A-Z) reached!");
+    console.warn("Alert:", "Maximum node limit (A-Z) reached!");
     return;
   }
 
@@ -1113,7 +1107,7 @@ function resetVisualizerState() {
 
 function initializeSimulation() {
   if (nodes.length === 0) {
-    alert("Please add nodes to the canvas or load a preset first!");
+    console.warn("Alert:", "Please add nodes to the canvas or load a preset first!");
     resetVisualizerState();
     return;
   }

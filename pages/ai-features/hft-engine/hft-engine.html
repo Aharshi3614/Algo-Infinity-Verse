@@ -6,8 +6,8 @@
     <title>HFT Matching Engine | Algo Infinity Verse</title>
     <meta name="description" content="High-Frequency Trading L2 Order Book Matching Engine Simulator." />
     
-    <link href="[https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Poppins:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap](https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Poppins:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap)" rel="stylesheet" />
-    <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css](https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css)" />
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Poppins:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="hft-engine.css" />
@@ -30,7 +30,7 @@
             <i class="fas fa-exclamation-triangle"></i>
             <h2>SharedArrayBuffer Unavailable</h2>
             <p>Your browser environment is missing Cross-Origin Isolation headers required for true lock-free shared memory. The engine will gracefully fall back to <code>postMessage</code> to simulate the architecture.</p>
-            <button class="btn btn-primary" id="btnAcceptFallback">Continue in Fallback Mode</button>
+            <button type="button" class="btn btn-primary" id="btnAcceptFallback">Continue in Fallback Mode</button>
         </div>
     </div>
 
@@ -48,10 +48,10 @@
                 </p>
 
                 <div class="action-grid">
-                    <button class="btn btn-primary w-100" id="btnStartTrading">
+                    <button type="button" class="btn btn-primary w-100" id="btnStartTrading">
                         <i class="fas fa-play"></i> Start Trading Bots
                     </button>
-                    <button class="btn btn-danger w-100 hidden" id="btnStopTrading">
+                    <button type="button" class="btn btn-danger w-100 hidden" id="btnStopTrading">
                         <i class="fas fa-stop"></i> Halt Market
                     </button>
                 </div>

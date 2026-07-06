@@ -1,12 +1,11 @@
 import IORedis from 'ioredis';
 import { Queue } from 'bullmq';
 
-// A simple in-memory store to track batch progress
-export const batchStore = new Map();
-
 // ── Redis availability check ───────────────────────────────────────────────
-// Test once at startup with a short timeout. If Redis isn't running we export
-// no-op stubs so bullmq is never instantiated and the console stays clean.
+// Test once at startup with a short timeout. If Redis isn't running we fall
+// back to an in-process queue (bullmq is never instantiated).
+
+export const batchStore = new Map();
 
 let bulkAuditQueue = null;
 let redisAvailable = false;
@@ -15,15 +14,22 @@ async function checkRedis() {
   const probe = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
     maxRetriesPerRequest: 1,
     connectTimeout: 1000,
-    retryStrategy: () => null,        // do NOT retry the probe connection
+    retryStrategy: () => null,
     enableOfflineQueue: false,
   });
-  // Suppress the expected ECONNREFUSED on the probe instance
   probe.on('error', () => {});
 
   try {
     await probe.ping();
     redisAvailable = true;
+    const connection = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
+      maxRetriesPerRequest: null,
+      enableOfflineQueue: false,
+    });
+    bulkAuditQueue = new Queue('bulk-audit-queue', { connection });
+    bulkAuditQueue.on('error', (err) => {
+      console.warn('Queue Redis Connection Error:', err.message);
+    });
   } catch {
     redisAvailable = false;
   } finally {
@@ -31,26 +37,24 @@ async function checkRedis() {
   }
 }
 
-await checkRedis();
+// Perform checking asynchronously. Consumers (e.g. the worker) must await this
+// promise before reading `redisAvailable`, otherwise they observe the initial
+// `false` value before the probe has resolved.
+const redisReady = checkRedis().catch(() => {});
 
-if (redisAvailable) {
-  const conn = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
-    maxRetriesPerRequest: null,
-  });
-  bulkAuditQueue = new Queue('bulk-audit-queue', { connection: conn });
-  console.log('Redis connected — Bulk audit queue ready.');
-} else {
-  console.log('Redis unavailable — Bulk audit will run in-process (no Redis required).');
-}
-
-export { bulkAuditQueue, redisAvailable };
-
-// ─────────────────────────────────────────────────────────────────────────────
+// Hard cap on repositories processed per bulk audit. Each URL fans out to one
+// or more outbound GitHub requests, so an unbounded list is an unauthenticated
+// denial-of-service / cost-amplification vector. Callers should reject larger
+// batches up front; this slice is a defense-in-depth backstop for any caller.
+export const MAX_BULK_AUDIT_URLS = 50;
 
 /**
  * Enqueues a batch of repositories for analysis.
  */
 export async function enqueueBulkAudit(batchId, repoUrls) {
+  // Defensive cap so a direct caller can never enqueue an unbounded batch.
+  repoUrls = repoUrls.slice(0, MAX_BULK_AUDIT_URLS);
+
   batchStore.set(batchId, {
     total: repoUrls.length,
     completed: 0,
@@ -64,8 +68,12 @@ export async function enqueueBulkAudit(batchId, repoUrls) {
       name: `audit-${batchId}-${index}`,
       data: { batchId, repoUrl: url }
     }));
-    await bulkAuditQueue.addBulk(jobs);
-    return;
+    try {
+      await bulkAuditQueue.addBulk(jobs);
+      return;
+    } catch (err) {
+      console.warn("Bulk add to Redis failed. Falling back to in-process.");
+    }
   }
 
   // ── In-process fallback (no Redis) ───────────────────────────────────────
@@ -105,3 +113,5 @@ export function getBatchProgress(batchId) {
 
   return { ...batch, progress };
 }
+
+export { bulkAuditQueue, redisAvailable, redisReady };

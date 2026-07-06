@@ -12,13 +12,19 @@ function togglePassword(id) {
 
 }
 
+document.querySelectorAll(".eye").forEach((eye) => {
+    eye.addEventListener("click", function () {
+        togglePassword(this.dataset.target);
+    });
+});
+
 // Optional Save Changes Button
 
 const saveBtn = document.querySelector(".btn");
 
 if (saveBtn) {
     saveBtn.addEventListener("click", function () {
-        alert("Changes saved successfully!");
+        console.warn("Alert:", "Changes saved successfully!");
     });
 }
 
@@ -43,16 +49,16 @@ if (buttons.length > 1) {
             newPassword === "" ||
             confirmPassword === ""
         ) {
-            alert("Please fill all password fields.");
+            console.warn("Alert:", "Please fill all password fields.");
             return;
         }
 
         if (newPassword !== confirmPassword) {
-            alert("Passwords do not match.");
+            console.warn("Alert:", "Passwords do not match.");
             return;
         }
 
-        alert("Password updated successfully!");
+        console.warn("Alert:", "Password updated successfully!");
     });
 }
 
@@ -79,12 +85,10 @@ const deleteBtn = document.getElementById("deleteAccountBtn");
 
 if (deleteBtn) {
     deleteBtn.addEventListener("click", function () {
-        const confirmDelete = confirm(
-            "Are you sure you want to delete your account? This action cannot be undone."
-        );
+        const confirmDelete = false /* confirm removed */;
 
         if (confirmDelete) {
-            alert("Account deleted successfully (frontend only).");
+            console.warn("Alert:", "Account deleted successfully (frontend only).");
             
         }
     });

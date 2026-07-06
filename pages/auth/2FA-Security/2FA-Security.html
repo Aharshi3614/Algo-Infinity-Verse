@@ -6,8 +6,8 @@
     <title>Security & 2FA | Algo Infinity Verse</title>
     <meta name="description" content="Manage your account security with Two-Factor Authentication (TOTP)." />
     
-    <link href="[https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Poppins:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap](https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Poppins:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap)" rel="stylesheet" />
-    <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css](https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css)" />
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Poppins:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     
     <!-- External Stylesheets -->
     <link rel="stylesheet" href="/styles.css" />
@@ -53,8 +53,8 @@
                     </div>
                 </div>
                 <div class="status-action">
-                    <button class="btn btn-primary" id="btnEnable2FA">Enable 2FA</button>
-                    <button class="btn btn-danger hidden" id="btnDisable2FA">Disable 2FA</button>
+                    <button type="button" class="btn btn-primary" id="btnEnable2FA">Enable 2FA</button>
+                    <button type="button" class="btn btn-danger hidden" id="btnDisable2FA">Disable 2FA</button>
                 </div>
             </div>
 
@@ -67,7 +67,7 @@
                     <p>Scan this QR code using an authenticator app like Google Authenticator, Authy, or Microsoft Authenticator.</p>
                     <div class="qr-container">
                         <!-- Mock QR Code SVG -->
-                        <svg width="150" height="150" viewBox="0 0 150 150" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)">
+                        <svg width="150" height="150" viewBox="0 0 150 150" xmlns="http://www.w3.org/2000/svg">
                             <rect width="150" height="150" fill="#fff"/>
                             <path d="M10,10 h40 v40 h-40 z M20,20 h20 v20 h-20 z M100,10 h40 v40 h-40 z M110,20 h20 v20 h-20 z M10,100 h40 v40 h-40 z M20,110 h20 v20 h-20 z M60,10 h30 v10 h-30 z M60,30 h10 v20 h-10 z M80,20 h10 v30 h-10 z M10,60 h20 v10 h-20 z M40,60 h10 v30 h-10 z M60,60 h40 v40 h-40 z M110,60 h30 v10 h-30 z M100,80 h40 v10 h-40 z M120,100 h20 v20 h-20 z M60,110 h20 v10 h-20 z M90,100 h10 v40 h-10 z M110,130 h30 v10 h-30 z M130,110 h10 v20 h-10 z" fill="#0f172a"/>
                         </svg>
@@ -76,8 +76,8 @@
                         <span>Or enter this secret key manually:</span>
                         <code>JBSWY3DPEHPK3PXP</code>
                     </div>
-                    <button class="btn btn-primary" id="btnNextStep1">Next Step <i class="fas fa-arrow-right"></i></button>
-                    <button class="btn btn-text" id="btnCancelSetup">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="btnNextStep1">Next Step <i class="fas fa-arrow-right"></i></button>
+                    <button type="button" class="btn btn-text" id="btnCancelSetup">Cancel</button>
                 </div>
 
                 <!-- Step 2: Verify OTP -->
@@ -96,7 +96,7 @@
                     </div>
                     <div class="error-msg hidden" id="setupErrorMsg">Invalid code. Please try again.</div>
                     
-                    <button class="btn btn-primary" id="btnVerifySetup">Verify & Enable</button>
+                    <button type="button" class="btn btn-primary" id="btnVerifySetup">Verify & Enable</button>
                 </div>
 
                 <!-- Step 3: Backup Codes -->
@@ -109,10 +109,10 @@
                     </div>
 
                     <div class="recovery-actions">
-                        <button class="btn btn-secondary" id="btnCopyCodes"><i class="fas fa-copy"></i> Copy Codes</button>
+                        <button type="button" class="btn btn-secondary" id="btnCopyCodes"><i class="fas fa-copy"></i> Copy Codes</button>
                     </div>
 
-                    <button class="btn btn-success" id="btnCompleteSetup">I have saved my codes safely</button>
+                    <button type="button" class="btn btn-success" id="btnCompleteSetup">I have saved my codes safely</button>
                 </div>
             </div>
         </main>
@@ -133,8 +133,8 @@
                         <label>Password</label>
                         <input type="password" value="********" disabled class="mock-input">
                     </div>
-                    <button class="btn btn-primary w-100" id="btnMockLogin">Sign In</button>
-                    <button class="btn btn-text w-100 mt-3" id="btnBackToSettings"><i class="fas fa-arrow-left"></i> Back to Settings</button>
+                    <button type="button" class="btn btn-primary w-100" id="btnMockLogin">Sign In</button>
+                    <button type="button" class="btn btn-text w-100 mt-3" id="btnBackToSettings"><i class="fas fa-arrow-left"></i> Back to Settings</button>
                 </div>
 
                 <div class="login-card hidden" id="loginStage2">
@@ -153,10 +153,10 @@
                     
                     <div class="error-msg hidden" id="loginErrorMsg">Invalid code. Please try again.</div>
                     
-                    <button class="btn btn-primary w-100" id="btnVerifyLogin">Authenticate</button>
+                    <button type="button" class="btn btn-primary w-100" id="btnVerifyLogin">Authenticate</button>
                     
                     <div class="login-footer">
-                        <a href="#" id="btnUseRecovery">Lost your phone? Use a recovery code.</a>
+                        <a href="javascript:void(0)" id="btnUseRecovery">Lost your phone? Use a recovery code.</a>
                     </div>
                 </div>
 
@@ -170,10 +170,10 @@
                     
                     <div class="error-msg hidden" id="recoveryErrorMsg">Invalid recovery code.</div>
                     
-                    <button class="btn btn-primary w-100" id="btnVerifyRecovery">Verify Recovery Code</button>
+                    <button type="button" class="btn btn-primary w-100" id="btnVerifyRecovery">Verify Recovery Code</button>
                     
                     <div class="login-footer">
-                        <a href="#" id="btnBackToOTP">Back to Authenticator App</a>
+                        <a href="javascript:void(0)" id="btnBackToOTP">Back to Authenticator App</a>
                     </div>
                 </div>
 
@@ -181,7 +181,7 @@
                     <div class="success-icon"><i class="fas fa-check-circle"></i></div>
                     <h2>Authentication Successful</h2>
                     <p>You have securely logged into your account.</p>
-                    <button class="btn btn-secondary w-100" id="btnReturnDashboard">Return to Dashboard</button>
+                    <button type="button" class="btn btn-secondary w-100" id="btnReturnDashboard">Return to Dashboard</button>
                 </div>
             </div>
         </main>
@@ -192,7 +192,11 @@
 
     <script src="2fa-security.js"></script>
 
+    <script src="/bootstrap-legacy.js"></script>
+
+
     <script src="/script.js"></script>
+    <script type="module" src="/dist/legacy-bundle.mjs"></script>
     <script src="/auth.js"></script>
     <script src="/theme.js"></script>
     <script src="/auth-gate.js"></script>

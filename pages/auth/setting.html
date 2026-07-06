@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Enforced server-side: unauthenticated requests are redirected to /login. -->
+    <meta name="auth-required" content="true">
     <title>Account Settings</title>  
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="setting.css" />
@@ -49,7 +51,7 @@
 
         <input type="text" placeholder="Phone Number">
 
-        <button class="btn">
+        <button type="button" class="btn">
             Save Changes
         </button>
     </div>
@@ -60,20 +62,20 @@
 
         <div class="password-box">
             <input type="password" id="currentPassword" placeholder="Current Password">
-            <span class="eye" onclick="togglePassword('currentPassword')">👁</span>
+            <span class="eye" data-target="currentPassword">👁</span>
         </div>
 
         <div class="password-box">
             <input type="password" id="newPassword" placeholder="New Password">
-            <span class="eye" onclick="togglePassword('newPassword')">👁</span>
+            <span class="eye" data-target="newPassword">👁</span>
         </div>
 
         <div class="password-box">
             <input type="password" id="confirmPassword" placeholder="Confirm Password">
-            <span class="eye" onclick="togglePassword('confirmPassword')">👁</span>
+            <span class="eye" data-target="confirmPassword">👁</span>
         </div>
 
-        <button class="btn">
+        <button type="button" class="btn">
             Update Password
         </button>
     </div>
@@ -116,13 +118,15 @@
     </div>
 
     <!-- Delete-btn  -->
-        <button class="delete-btn" id="deleteAccountBtn">
+        <button type="button" class="delete-btn" id="deleteAccountBtn">
             Delete Account
         </button>
     </div>
 
 
-<script src="/interceptors.js"></script><script src="/script.js"></script>
+<script src="/interceptors.js"></script>    <script src="/bootstrap-legacy.js"></script>
+<script src="/script.js"></script>
+    <script type="module" src="/dist/legacy-bundle.mjs"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     loadPartial('navbar-placeholder', '/partials/navbar.html');

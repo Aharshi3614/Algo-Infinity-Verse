@@ -1,1 +1,0 @@
-{"name": "mock-repo", "workspaces": ["apps/*", "packages/*"]}

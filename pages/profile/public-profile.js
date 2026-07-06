@@ -75,9 +75,17 @@ function renderProfile(data) {
 function shareProfile() {
     const url = window.location.href;
     navigator.clipboard.writeText(url).then(() => {
-        alert('Profile link copied to clipboard!');
+        console.warn("Alert:", 'Profile link copied to clipboard!');
     });
 }
 
 // Load profile
-fetchProfile();
+document.addEventListener("DOMContentLoaded", () => {
+    const shareBtn = document.getElementById("shareProfileBtn");
+
+    if (shareBtn) {
+        shareBtn.addEventListener("click", shareProfile);
+    }
+
+    fetchProfile();
+});

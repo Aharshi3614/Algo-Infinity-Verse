@@ -329,6 +329,18 @@
             }
         });
 
+        document.getElementById('predictBtn').addEventListener('click', () => {
+            document.getElementById('predictionModal').style.display = 'block';
+        });
+
+        document
+            .getElementById('closePredictionBtn')
+            .addEventListener('click', closePredictionModal);
+
+        function closePredictionModal() {
+            document.getElementById('predictionModal').style.display = 'none';
+        }
+
         // Load initial template
         editor.setValue(templates.javascript);
     </script>
