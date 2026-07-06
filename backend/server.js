@@ -16,6 +16,8 @@ const SESSION_COOKIE = "aiv_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const PBKDF2_ITERATIONS = 210000;
 const PASSWORD_KEY_LENGTH = 32;
+const replayRoutes = require('./routes/replayRoutes');
+app.use('/api/replay', replayRoutes);
 
 // ── IP & Proxy Identification ────────────────────────────────────────────────
 const TRUSTED_PROXIES = new Set(
