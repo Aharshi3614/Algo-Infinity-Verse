@@ -502,6 +502,26 @@ export function initQuiz({ containerId, questions, duration = 60 }) {
     }, 250);
   }
 
+  // Render skeleton loader
+  function renderSkeleton() {
+    container.innerHTML = '';
+    const skeletonForm = document.createElement('div');
+    skeletonForm.className = 'quiz-skeleton';
+    for (let i = 0; i < 3; i++) {
+      const block = document.createElement('div');
+      block.className = 'quiz-question-block glass-card';
+      block.innerHTML = `
+        <div class="skeleton skeleton-line question" style="width:70%;margin-bottom:1rem;"></div>
+        <div class="skeleton skeleton-line option"></div>
+        <div class="skeleton skeleton-line option" style="width:85%;"></div>
+        <div class="skeleton skeleton-line option" style="width:75%;"></div>
+        <div class="skeleton skeleton-line option" style="width:90%;"></div>
+      `;
+      skeletonForm.appendChild(block);
+    }
+    container.appendChild(skeletonForm);
+  }
+
   // Initialize and shuffle quiz data
   function setupQuiz() {
     hasSubmitted = false;
@@ -512,7 +532,8 @@ export function initQuiz({ containerId, questions, duration = 60 }) {
         shuffledOptions: shuffleArray(q.options)
       };
     });
-    renderQuiz();
+    renderSkeleton();
+    setTimeout(renderQuiz, 600);
     
     // Add resize listener
     window.addEventListener('resize', handleResize);
