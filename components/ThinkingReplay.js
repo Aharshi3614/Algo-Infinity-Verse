@@ -128,13 +128,13 @@ export class ThinkingReplay {
 
     bindEvents() {
         // Play button
-        const playBtn = document.getElementById('playBtn');
+        const playBtn = this.container.querySelector('`#playBtn`');
         if (playBtn) {
             playBtn.addEventListener('click', () => this.togglePlay());
         }
 
         // Step buttons
-        document.querySelectorAll('.step-btn').forEach(btn => {
+        this.container.querySelectorAll('.step-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 this.pause();
                 this.currentStep = parseInt(btn.dataset.index);
