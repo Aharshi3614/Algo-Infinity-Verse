@@ -538,5 +538,17 @@
     "timestamp": 1783431769690,
     "stack": "SyntaxError: Unexpected token 'export'",
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+  },
+  {
+    "message": "Uncaught SyntaxError: Unexpected token 'export'",
+    "source": "http://localhost:3000/utils/spacedRepetition.js",
+    "lineno": 9,
+    "colno": 1,
+    "pageName": "index",
+    "feature": "general",
+    "lastActionTimestamp": 1783432089605,
+    "timestamp": 1783432089801,
+    "stack": "SyntaxError: Unexpected token 'export'",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
   }
 ]
