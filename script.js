@@ -1,195 +1,17 @@
-// ============================================
-// ABORT MANAGER
-// ============================================
-/**
- * Manages AbortControllers to allow cancellation of ongoing requests.
- */
-class AbortManager {
-  constructor() {
-    this.controllers = new Map();
-  }
-  /**
-   * Retrieves an AbortSignal for the given key, cancelling any previous request with the same key.
-   *
-   * @param {string} key - The unique identifier for the request.
-   * @returns {AbortSignal} The signal to pass to the fetch API.
-   */
-  getSignal(key) {
-    if (this.controllers.has(key)) {
-      this.controllers.get(key).abort();
-    }
-    const controller = new AbortController();
-    this.controllers.set(key, controller);
-    return controller.signal;
-  }
-  /**
-   * Removes the AbortController associated with the given key.
-   *
-   * @param {string} key - The unique identifier for the request.
-   */
-  clearSignal(key) {
-    this.controllers.delete(key);
-  }
-}
+// Nuke all caches on every page load — ensures fresh content always
+(async function nukeCaches() {
+  try {
+    // Delete IndexedDB cache
+    indexedDB.deleteDatabase('AlgoInfinityCache');
+  } catch (e) {}
+  try {
+    // Unregister all service workers
+    const regs = await navigator.serviceWorker?.getRegistrations();
+    if (regs) for (const r of regs) await r.unregister();
+  } catch (e) {}
+})();
 
-const apiAbort = new AbortManager();
 
-// ============================================
-// CACHE MANAGER (IndexedDB)
-// ============================================
-/**
- * Manages caching of API responses and partials using IndexedDB.
- */
-class CacheManager {
-  constructor(dbName = 'AlgoInfinityCache', storeName = 'api_responses') {
-    this.dbName = dbName;
-    this.storeName = storeName;
-    this.dbPromise = this.initDB();
-  }
-
-  /**
-   * Initializes the IndexedDB database.
-   *
-   * @returns {Promise<IDBDatabase>} The initialized database instance.
-   */
-  initDB() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, 1);
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result);
-      request.onupgradeneeded = (e) => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains(this.storeName)) {
-          db.createObjectStore(this.storeName, { keyPath: 'url' });
-        }
-      };
-    });
-  }
-
-  /**
-   * Stores data in the cache.
-   *
-   * @param {string} url - The URL key for the cached data.
-   * @param {any} data - The data to cache.
-   * @param {string} [type='json'] - The type of data being cached ('json' or 'text').
-   * @param {number} [ttlMs=3600000] - Time to live in milliseconds.
-   * @returns {Promise<void>}
-   */
-  async set(url, data, type = 'json', ttlMs = 3600000) {
-    try {
-      const db = await this.dbPromise;
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(this.storeName, 'readwrite');
-        const store = tx.objectStore(this.storeName);
-        const record = {
-          url,
-          data,
-          type,
-          expiresAt: Date.now() + ttlMs,
-          updatedAt: Date.now()
-        };
-        const req = store.put(record);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch (e) {
-      void 0;
-    }
-  }
-
-  /**
-   * Retrieves data from the cache.
-   *
-   * @param {string} url - The URL key for the cached data.
-   * @returns {Promise<Object|null>} The cached record, or null if not found or expired.
-   */
-  async get(url) {
-    try {
-      const db = await this.dbPromise;
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(this.storeName, 'readonly');
-        const store = tx.objectStore(this.storeName);
-        const req = store.get(url);
-        req.onsuccess = () => {
-          const record = req.result;
-          if (!record) return resolve(null);
-          if (Date.now() > record.expiresAt) {
-            this.invalidate(url);
-            return resolve(null);
-          }
-          resolve(record);
-        };
-        req.onerror = () => reject(req.error);
-      });
-    } catch (e) {
-      void 0;
-      return null;
-    }
-  }
-
-  /**
-   * Invalidates a specific cache entry.
-   *
-   * @param {string} url - The URL key to invalidate.
-   * @returns {Promise<void>}
-   */
-  async invalidate(url) {
-    try {
-      const db = await this.dbPromise;
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction(this.storeName, 'readwrite');
-        const store = tx.objectStore(this.storeName);
-        const req = store.delete(url);
-        req.onsuccess = () => resolve();
-        req.onerror = () => reject(req.error);
-      });
-    } catch (e) {
-      void 0;
-    }
-  }
-
-  /**
-   * Fetches data from a URL, utilizing the cache if available and not expired.
-   *
-   * @param {string} url - The URL to fetch.
-   * @param {Object} [options={}] - Fetch options (e.g., method, headers, signal).
-   * @param {number} [ttlMs=3600000] - Time to live in milliseconds for the cache.
-   * @param {string} [type='json'] - The expected response type ('json' or 'text').
-   * @returns {Promise<any>} The fetched or cached data.
-   */
-  async fetchWithCache(url, options = {}, ttlMs = 3600000, type = 'json') {
-    const cached = await this.get(url);
-    
-    const doFetch = async () => {
-      try {
-        const resp = await fetch(url, options);
-        if (!resp.ok) throw new Error('Network response was not ok');
-        const data = type === 'json' ? await resp.json() : await resp.text();
-        await this.set(url, data, type, ttlMs);
-        return data;
-      } catch (e) {
-        if (e.name === 'AbortError') throw e;
-        void 0;
-        if (cached) return cached.data;
-        throw e;
-      }
-    };
-
-    if (cached) {
-      const age = Date.now() - cached.updatedAt;
-      if (age > ttlMs / 2) {
-        doFetch().catch(e => {
-          if (e.name !== 'AbortError') void 0;
-        });
-      }
-      return cached.data;
-    }
-
-    return await doFetch();
-  }
-}
-
-const apiCache = new CacheManager();
 
 // ============================================
 // PARTIAL LOADER
@@ -210,34 +32,26 @@ function getPartialsBase() {
   return 'partials';
 }
 
-const PARTIALS_VERSION = 1;
-
-/**
- * Asynchronously loads a partial HTML file and injects it into a target element.
- *
- * @param {string} id - The ID of the target DOM element.
- * @param {string} url - The relative URL of the partial to load.
- * @returns {Promise<void>}
- */
 async function loadPartial(id, url) {
   const abortKey = `partial_${id}`;
   try {
-    const signal = apiAbort.getSignal(abortKey);
+    const signal = window.apiAbort ? window.apiAbort.getSignal(abortKey) : undefined;
     const base = getPartialsBase();
     const filename = url.replace(/^\/?partials\//, '');
-    const fetchUrl = base + '/' + filename;
-    const versionedUrl = fetchUrl + '?v=' + PARTIALS_VERSION;
+    const fetchUrl = base + '/' + filename + '?t=' + Date.now();
     
-    const html = await apiCache.fetchWithCache(versionedUrl, { signal }, 86400000, 'text');
+    const resp = await fetch(fetchUrl, { signal });
+    if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+    const html = await resp.text();
     
     document.getElementById(id).innerHTML = html;
-    handleActiveNav();
+    if (typeof handleActiveNav === 'function') handleActiveNav();
   } catch (e) {
     if (e.name !== 'AbortError') {
       void 0;
     }
   } finally {
-    apiAbort.clearSignal(abortKey);
+    if (window.apiAbort) window.apiAbort.clearSignal(abortKey);
   }
 }
 window.addEventListener("load", () => {
@@ -422,13 +236,848 @@ const chatbotResponses = {
 // USER PROGRESS STATE
 // ============================================
 // Use window.userProgress set by modules/userProgress.js (single source of truth)
-let userProgress = window.userProgress;
+userProgress = window.userProgress;
 
 // Spaced repetition intervals defined in data/revision-intervals.js
 // ============================================
 // QUIZ EDITOR STATE
 // ============================================
 let currentProblem = null;
+
+/**
+ * @function initApplication
+ * @description Wraps core application startup logic, UI rendering, and global DOM event 
+ * listeners to ensure safe execution only after the HTML DOM is fully parsed.
+ * Fixes unexpected initialization crashes on production deployment environments (e.g., Vercel).
+ * @see {@link https://github.com/Eshajha19/Algo-Infinity-Verse/issues/258}
+ */
+// ===== INITIALIZATION =====
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOMContentLoaded fired, initializing app...');
+    if (typeof loadUserData === 'function') loadUserData();
+    initLoadingScreen();
+    initNavbar();
+    initHeroSection();
+    initTopicsSection();
+    initQuizSection();
+    initPracticeSection();
+    initRoadmap();
+    initDashboard();
+    initGamification();
+    initChatbot();
+    initProfile();
+    initScrollEffects();
+    initDarkMode();
+
+    // Update profile display after loading
+    
+    console.log('App initialization complete');
+
+    // Language change handler for code editor
+    const langSelect = document.getElementById('languageSelect');
+    if (langSelect) {
+        langSelect.addEventListener('change', () => {
+            if (currentProblem) {
+                const editor = document.getElementById('codeEditor');
+                editor.value = getDefaultCode(langSelect.value, currentProblem);
+                editor.dispatchEvent(new Event('input'));
+            }
+        });
+    }
+  });
+document.addEventListener("DOMContentLoaded", () => {
+
+  // Apply saved theme only after DOM is ready to avoid touching document.body too early
+
+  if (typeof loadUserData === 'function') loadUserData();
+  initLoadingScreen();
+  initNavbar();
+  initHeroSection();
+  initTopicOfTheDay();
+  initTopicsSection();
+  initQuizSection();
+  initPracticeSection();
+  initRoadmap();
+  initDashboard();
+  initGamification();
+  initDailyChallenge();
+  initChatbot();
+  initProfile();
+  initNewsletterValidation();
+  initScrollEffects();
+  initFooterCurrentDate();
+
+  // Update profile display after loading
+  updateProfile();
+
+  // Language change handler for code editor
+  const langSelect = document.getElementById("languageSelect");
+  if (langSelect) {
+    langSelect.addEventListener("change", () => {
+      if (currentProblem) {
+        const editor = document.getElementById("codeEditor");
+        editor.value = getDefaultCode(langSelect.value, currentProblem);
+        editor.dispatchEvent(new Event("input"));
+      }
+    });
+  }
+
+  // Modal close handlers
+  const modalClose = document.getElementById("modalClose");
+  if (modalClose) {
+    modalClose.addEventListener("click", closeTopicModal);
+  }
+
+  const topicModal = document.getElementById("topicModal");
+  if (topicModal) {
+    topicModal.addEventListener("click", (e) => {
+      if (e.target === topicModal) {
+        closeTopicModal();
+      }
+    });
+  }
+
+
+  const saveNotesBtn = document.getElementById("saveNotesBtn");
+
+  if (saveNotesBtn) {
+    saveNotesBtn.addEventListener("click", saveProblemNotes);
+  }
+
+  const notesModalClose = document.getElementById("notesModalClose");
+
+  if (notesModalClose) {
+    notesModalClose.addEventListener("click", closeNotesModal);
+  }
+
+  const closeNotesBtn = document.getElementById("closeNotesBtn");
+
+  if (closeNotesBtn) {
+    closeNotesBtn.addEventListener("click", closeNotesModal);
+  }
+
+  const notesModal = document.getElementById("notesModal");
+
+  if (notesModal) {
+    notesModal.addEventListener("click", (e) => {
+      if (e.target === notesModal) {
+        closeNotesModal();
+      }
+    });
+  }
+
+  // Original Quiz Editor Modal (coding problems) close handlers
+  const quizEditorCloseBtn = document.getElementById("quizModalClose");
+  if (quizEditorCloseBtn) {
+    quizEditorCloseBtn.addEventListener("click", closeQuizEditor);
+  }
+
+  const quizEditorModal = document.getElementById("quizEditorModal");
+  if (quizEditorModal) {
+    quizEditorModal.addEventListener("click", (e) => {
+      if (e.target === quizEditorModal) {
+        closeQuizEditor();
+      }
+    });
+  }
+
+  // New Topic Quiz Modal close handlers
+  const topicQuizCloseBtn = document.getElementById("topicQuizModalClose");
+  if (topicQuizCloseBtn) {
+    topicQuizCloseBtn.addEventListener("click", closeQuizModal);
+  }
+
+  const topicQuizModal = document.getElementById("quizModal");
+  if (topicQuizModal) {
+    topicQuizModal.addEventListener("click", (e) => {
+      if (e.target === topicQuizModal) {
+        closeQuizModal();
+      }
+    });
+  }
+});
+
+// ===== LOADING SCREEN =====
+function initLoadingScreen() {
+  setTimeout(() => {
+    document.getElementById("loading-screen").classList.add("hidden");
+    initializeAnimations();
+  }, 2000);
+}
+
+// ===== NAVBAR =====
+function initNavbar() {
+  const menuToggle = document.getElementById("menuToggle");
+  const navLinks = document.getElementById("navLinks");
+
+  let overlay = document.querySelector(".nav-overlay");
+  if (!overlay && menuToggle && navLinks) {
+    overlay = document.createElement("div");
+    overlay.className = "nav-overlay";
+    document.body.appendChild(overlay);
+  }
+
+  const toggleMenu = (open) => {
+    const isOpen = open !== undefined ? open : !navLinks.classList.contains("active");
+    navLinks.classList.toggle("active", isOpen);
+    menuToggle.setAttribute("aria-expanded", isOpen);
+    if (overlay) overlay.classList.toggle("active", isOpen);
+    document.body.style.overflow = isOpen ? "hidden" : "";
+    const icon = menuToggle.querySelector("i");
+    if (icon) {
+      icon.classList.toggle("fa-bars", !isOpen);
+      icon.classList.toggle("fa-times", isOpen);
+    }
+  };
+
+  const closeMenu = () => {
+    if (!navLinks.classList.contains("active")) return;
+    toggleMenu(false);
+  };
+
+  if (menuToggle && navLinks) {
+    menuToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleMenu();
+    });
+
+    if (overlay) overlay.addEventListener("click", closeMenu);
+
+    navLinks.querySelectorAll("a").forEach((link) => {
+      link.addEventListener("click", closeMenu);
+    });
+  }
+
+  const dropdownToggles = document.querySelectorAll(".dropdown-toggle");
+  const isMobile = () => window.matchMedia("(max-width: 1024px)").matches;
+
+  dropdownToggles.forEach((toggle) => {
+    const parent = toggle.closest(".has-dropdown");
+    const menu = parent?.querySelector(".dropdown-menu");
+    if (!parent || !menu) return;
+
+    let hoverTimeout;
+
+    const showMenu = () => {
+      clearTimeout(hoverTimeout);
+      parent.classList.add("open");
+      toggle.setAttribute("aria-expanded", "true");
+    };
+
+    const hideMenu = () => {
+      hoverTimeout = setTimeout(() => {
+        parent.classList.remove("open");
+        toggle.setAttribute("aria-expanded", "false");
+      }, 250);
+    };
+
+    parent.addEventListener("mouseenter", () => { if (!isMobile()) showMenu(); });
+    parent.addEventListener("mouseleave", () => { if (!isMobile()) hideMenu(); });
+    toggle.addEventListener("focus", () => { if (!isMobile()) showMenu(); });
+    menu.addEventListener("focusin", () => { if (!isMobile()) showMenu(); });
+    parent.addEventListener("focusout", () => { if (!isMobile()) hideMenu(); });
+
+    toggle.addEventListener("click", (e) => {
+      if (isMobile()) {
+        e.preventDefault();
+        e.stopPropagation();
+        const isOpen = parent.classList.toggle("open");
+        toggle.setAttribute("aria-expanded", isOpen);
+      }
+    });
+
+    menu.querySelectorAll(".dropdown-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        if (isMobile()) {
+          parent.classList.remove("open");
+          toggle.setAttribute("aria-expanded", "false");
+        }
+      });
+    });
+  });
+
+  window.addEventListener("resize", () => {
+    if (!isMobile()) {
+      if (navLinks.classList.contains("active")) {
+        toggleMenu(false);
+      }
+      document.querySelectorAll(".has-dropdown.open").forEach((el) => {
+        el.classList.remove("open");
+      });
+      dropdownToggles.forEach((toggle) => {
+        toggle.setAttribute("aria-expanded", "false");
+      });
+    }
+  });
+}
+
+// ===== HERO SECTION =====
+function initHeroSection() {
+  // Typing animation
+  const typingElement = document.getElementById("typingText");
+  if (!typingElement) return;
+  const texts = [
+    "Arrays",
+    "Linked Lists",
+    "Trees",
+    "Graphs",
+    "Dynamic Programming",
+    "System Design",
+  ];
+  let textIndex = 0;
+  let charIndex = 0;
+  let isDeleting = false;
+
+  function typeEffect() {
+    const currentText = texts[textIndex];
+
+    if (isDeleting) {
+      typingElement.textContent = currentText.substring(0, charIndex - 1);
+      charIndex--;
+    } else {
+      typingElement.textContent = currentText.substring(0, charIndex + 1);
+      charIndex++;
+    }
+
+    let typeSpeed = isDeleting ? 50 : 100;
+
+    if (!isDeleting && charIndex === currentText.length) {
+      typeSpeed = 2000;
+      isDeleting = true;
+    } else if (isDeleting && charIndex === 0) {
+      isDeleting = false;
+      textIndex = (textIndex + 1) % texts.length;
+      typeSpeed = 500;
+    }
+
+    setTimeout(typeEffect, typeSpeed);
+  }
+
+  typeEffect();
+
+  // Animate stats
+  const statNumbers = document.querySelectorAll(".stat-number");
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          animateValue(entry.target);
+          observer.unobserve(entry.target);
+        }
+      });
+    },
+    { threshold: 0.5 },
+  );
+
+  statNumbers.forEach((stat) => observer.observe(stat));
+}
+
+function animateValue(element) {
+  const target = parseInt(element.getAttribute("data-target"));
+  const duration = 2000;
+  const increment = target / (duration / 16);
+  let current = 0;
+
+  const timer = setInterval(() => {
+    current += increment;
+    if (current >= target) {
+      current = target;
+      clearInterval(timer);
+    }
+    element.textContent = Math.ceil(current).toLocaleString();
+  }, 16);
+}
+
+// ===== PROFILE EDITING =====
+let selectedAvatar = "🚀";
+
+const avatarOptions = [
+  "🚀",
+  "🌟",
+  "🔥",
+  "💎",
+  "🎯",
+  "🧠",
+  "⚡",
+  "🦄",
+  "🐉",
+  "🔮",
+  "🎨",
+  "🎭",
+];
+
+function initProfileEdit() {
+  try {
+    const avatarContainer = document.getElementById("avatarOptions");
+    if (!avatarContainer) {
+      console.warn("Avatar options container not found");
+      return;
+    }
+
+    const currentAvatar = userProgress.avatar || "🚀";
+
+    avatarContainer.innerHTML = avatarOptions
+      .map(
+        (avatar) => `
+            <div class="avatar-option ${avatar === currentAvatar ? "selected" : ""}"
+                 data-avatar="${avatar}">${avatar}</div>
+        `,
+      )
+      .join("");
+
+    avatarContainer.querySelectorAll(".avatar-option").forEach((opt) => {
+      opt.addEventListener("click", () => {
+        avatarContainer
+          .querySelectorAll(".avatar-option")
+          .forEach((o) => o.classList.remove("selected"));
+        opt.classList.add("selected");
+        selectedAvatar = opt.dataset.avatar;
+      });
+    });
+
+    const nameInput = document.getElementById("profileNameInput");
+    if (nameInput) {
+      nameInput.value = userProgress.name || "Learner";
+    }
+
+    selectedAvatar = currentAvatar;
+  } catch (error) {
+    console.error("Error in initProfileEdit:", error);
+  }
+}
+
+function openProfileModal() {
+  try {
+    const modal = document.getElementById("profileEditModal");
+    if (!modal) {
+      console.error("Profile edit modal not found");
+      return;
+    }
+    initProfileEdit();
+    modal.classList.add("active");
+  } catch (error) {
+    console.error("Error opening profile modal:", error);
+  }
+}
+
+function closeProfileModal() {
+  const modal = document.getElementById("profileEditModal");
+  if (modal) modal.classList.remove("active");
+}
+
+function saveProfileChanges() {
+  const nameInput = document.getElementById("profileNameInput");
+  const newName = nameInput.value.trim() || "Learner";
+
+  userProgress.name = newName;
+  userProgress.avatar = selectedAvatar;
+
+  saveUserData();
+  updateProfile();
+  closeProfileModal();
+  showNotification("Profile updated successfully!", "success");
+}
+
+// Profile click handler
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".profile-edit-btn")) {
+    openProfileModal();
+  }
+});
+
+// Profile modal close
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#profileModalClose")) {
+    closeProfileModal();
+  }
+  const modal = document.getElementById("profileEditModal");
+  if (modal && e.target === modal) {
+    closeProfileModal();
+  }
+});
+
+function getTopicProgress(topicName) {
+  // Map topic names to category keys used in practiceProblems
+  const categoryMap = {
+    Arrays: "arrays",
+    Strings: "strings",
+    "Linked List": "linkedlist",
+    Trees: "trees",
+    Graphs: "graphs",
+    "Dynamic Programming": "dp",
+  };
+
+  const category = categoryMap[topicName];
+  if (!category) return { completed: 0, total: 0, percentage: 0 };
+
+  const topicProblems = practiceProblems.filter((p) => p.category === category);
+  const total = topicProblems.length;
+  if (total === 0) return { completed: 0, total: 0, percentage: 0 };
+
+  const completed = topicProblems.filter((p) =>
+    userProgress.completedProblems.includes(p.id),
+  ).length;
+
+  const percentage = Math.round((completed / total) * 100);
+  return { completed, total, percentage };
+}
+
+// ===== TOPICS SECTION =====
+function getDayOfYear() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 0);
+  const diff = now - start;
+  const oneDay = 1000 * 60 * 60 * 24;
+  return Math.floor(diff / oneDay);
+}
+
+function getDailyTopic() {
+  const index = getDayOfYear() % dsaTopics.length;
+  return dsaTopics[index];
+}
+
+function initTopicOfTheDay() {
+  const topic = getDailyTopic();
+  if (!topic) return;
+
+  const totdIcon = document.getElementById("totdIcon");
+  if (!totdIcon) return;
+
+  totdIcon.textContent = topic.icon;
+  document.getElementById("totdTitle").textContent = topic.name;
+  document.getElementById("totdDesc").textContent = topic.description;
+
+  const diffEl = document.getElementById("totdDifficulty");
+  diffEl.textContent = topic.difficulty;
+  diffEl.className = `totd-difficulty difficulty-badge ${getDifficultyClass(topic.difficulty)}`;
+
+  const progress = getTopicProgress(topic.name);
+  document.getElementById("totdProblems").textContent =
+    `${progress.completed}/${progress.total} solved`;
+
+  document.getElementById("totdBtn").addEventListener("click", () => {
+    openTopicModal(topic);
+  });
+}
+
+function initTopicsSection() {
+  const topicsGrid = document.querySelector(".topics-grid");
+  if (!topicsGrid) return;
+  topicsGrid.innerHTML = "";
+  dsaTopics.forEach((topic, index) => {
+    const card = document.createElement("div");
+    card.className = "topic-card animate-in";
+    card.style.animationDelay = `${index * 0.1}s`;
+    const progress = getTopicProgress(topic.name);
+
+    card.innerHTML = `
+        <div class="topic-icon">${topic.icon}</div>
+        <h3 class="topic-name">${topic.name}</h3>
+        <p class="topic-desc">${topic.description}</p>
+        <div class="topic-meta">
+            <span class="difficulty-badge ${getDifficultyClass(topic.difficulty)}">${topic.difficulty}</span>
+            <span class="topic-count">${progress.total} problems</span>
+        </div>
+        <div class="topic-mastery">
+            <div class="mastery-header">
+                <span class="mastery-label">Progress</span>
+                <span class="mastery-stats">${progress.completed}/${progress.total} solved</span>
+            </div>
+            <div class="mastery-bar" role="progressbar" aria-valuenow="${progress.percentage}" aria-valuemin="0" aria-valuemax="100" aria-label="${topic.name} mastery progress">
+                <div class="mastery-fill" style="width: ${progress.percentage}%"></div>
+            </div>
+            <span class="mastery-percentage">${progress.percentage}%</span>
+        </div>
+    `;
+
+    topicsGrid.appendChild(card);
+
+    card.addEventListener("click", () => {
+      openTopicModal(topic);
+    });
+  });
+}
+
+function getDifficultyClass(difficulty) {
+  switch (difficulty.toLowerCase()) {
+    case "easy":
+      return "easy";
+    case "medium":
+      return "medium";
+    case "hard":
+      return "hard";
+    default:
+      return "medium";
+  }
+}
+
+function getDifficultyIcon(difficulty) {
+  switch (difficulty.toLowerCase()) {
+    case "easy":
+      return "\u2705";
+    case "medium":
+      return "\u26A1";
+    case "hard":
+      return "\uD83D\uDD25";
+    default:
+      return "\u2753";
+  }
+}
+
+function getDifficultyBadge(difficulty) {
+  const cls = getDifficultyClass(difficulty);
+  const icon = getDifficultyIcon(difficulty);
+  return `<span class="difficulty-badge ${cls}"><span class="difficulty-icon">${icon}</span> ${difficulty}</span>`;
+}
+
+// Get quiz topic key from topic object
+function getQuizTopicKey(topic) {
+  const normalize = (s) =>
+    String(s)
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+
+  const toKnownKey = (key) => {
+    const map = {
+      arrays: "arrays",
+      strings: "strings",
+      "linked list": "linkedlist",
+      linkedlist: "linkedlist",
+      trees: "trees",
+      graphs: "graphs",
+      "dynamic programming": "dp",
+      dp: "dp",
+    };
+    return map[normalize(key)] || null;
+  };
+
+  // If we already received a key, normalize it to one of quizQuestions keys.
+  if (typeof topic === "string") {
+    return toKnownKey(topic) || normalize(topic).replace(/\s+/g, "");
+  }
+
+  const name = normalize(topic.name);
+
+  const keyMap = {
+    arrays: "arrays",
+    strings: "strings",
+    "linked list": "linkedlist",
+    trees: "trees",
+    graphs: "graphs",
+    "dynamic programming": "dp",
+  };
+
+  return keyMap[name] || toKnownKey(name) || null;
+}
+
+
+function initQuizSection() {
+  try {
+    const quizGrid = document.querySelector(".quiz-grid");
+    if (!quizGrid) {
+      console.warn("Quiz grid element not found");
+      return;
+    }
+    quizGrid.innerHTML = "";
+
+    dsaTopics.forEach((topic, index) => {
+      const topicKey = getQuizTopicKey(topic);
+      if (!topicKey) return;
+      const card = document.createElement("div");
+      card.className = "quiz-card animate-in";
+      card.style.animationDelay = `${index * 0.1}s`;
+      card.innerHTML = `
+                <div class="quiz-card-icon">${topic.icon}</div>
+                <h3 class="quiz-card-title">${topic.name}</h3>
+                <p class="quiz-card-desc">Test your knowledge with 10 unique questions</p>
+                <div class="quiz-card-meta">
+                    <span class="quiz-count">10 Questions</span>
+                    <span class="quiz-difficulty ${getDifficultyClass(topic.difficulty)}">${topic.difficulty}</span>
+                </div>
+                <div class="quiz-progress-bar">
+                    <div class="quiz-progress-fill" id="progress-${topicKey}"></div>
+                </div>
+                <div class="quiz-stats">
+                    <span>Best: <strong id="best-${topicKey}">--</strong></span>
+                    <span>Attempts: <strong id="attempts-${topicKey}">0</strong></span>
+                </div>
+                <button class="btn btn-primary start-quiz-btn" data-topic="${topicKey}">
+                    <i class="fas fa-play"></i> Start Quiz
+                </button>
+            `;
+      quizGrid.appendChild(card);
+      card.addEventListener("click", () => {
+        startQuiz(topicKey);
+      });
+
+      // Update progress display
+      updateQuizProgressDisplay(topic);
+
+      // Add click handler
+      const startBtn = card.querySelector(".start-quiz-btn");
+      if (startBtn) {
+        startBtn.addEventListener("click", (e) => {
+         e.stopPropagation();
+           startQuiz(topicKey);
+         });
+      } else {
+        console.error("Start quiz button not found for topic:", topic.name);
+      }
+    });
+  } catch (error) {
+    console.error("Error initializing quiz section:", error);
+  }
+}
+
+function updateQuizProgressDisplay(topic) {
+  const topicKey = getQuizTopicKey(topic);
+  const progressFill = document.getElementById(`progress-${topicKey}`);
+  const bestScoreEl = document.getElementById(`best-${topicKey}`);
+  const attemptsEl = document.getElementById(`attempts-${topicKey}`);
+
+  if (!progressFill || !bestScoreEl || !attemptsEl) return;
+
+  const quizData = userProgress.quizScores[topicKey] || {
+    bestScore: 0,
+    attempts: 0,
+    totalXP: 0,
+  };
+  const progressPercent = quizData.attempts > 0 ? 100 : 0; // Full bar if attempted, empty otherwise
+
+  progressFill.style.width = `${progressPercent}%`;
+  bestScoreEl.textContent = `${quizData.bestScore}%`;
+  attemptsEl.textContent = quizData.attempts;
+}
+
+
+function showQuizLoading(topicName) {
+    const loader = document.getElementById('quizLoadingScreen');
+    const topic = document.getElementById('quizLoadingTopic');
+
+    if (topic) {
+        topic.textContent = `Loading ${topicName} Quiz`;
+    }
+
+    if (loader) {
+        loader.classList.remove('hidden');
+    }
+
+    document.getElementById('topicQuizQuestionText').style.display = 'none';
+    document.getElementById('topicQuizOptions').style.display = 'none';
+    document.getElementById('topicQuizCounter').style.display = 'none';
+
+    const progress = document.querySelector('.quiz-progress-bar-container');
+    if (progress) progress.style.display = 'none';
+}
+
+function hideQuizLoading() {
+    const loader = document.getElementById('quizLoadingScreen');
+
+    if (loader) {
+        loader.classList.add('hidden');
+    }
+
+    document.getElementById('topicQuizQuestionText').style.display = '';
+    document.getElementById('topicQuizOptions').style.display = '';
+    document.getElementById('topicQuizCounter').style.display = '';
+
+    const progress = document.querySelector('.quiz-progress-bar-container');
+    if (progress) progress.style.display = '';
+}
+function startQuiz(topic) {
+    const topicKey = getQuizTopicKey(topic);
+    const questions = quizQuestions[topicKey];
+    
+    if (!questions || questions.length === 0) {
+        showNotification('No quiz questions available for this topic yet!', 'error');
+        return;
+    }
+
+
+
+  const resultEl = document.getElementById("topicQuizResult");
+
+  if (resultEl) {
+    resultEl.classList.add("hidden");
+    resultEl.innerHTML = "";
+  }
+  document.getElementById("topicQuizQuestionText").style.display = "block";
+  document.getElementById("topicQuizOptions").style.display = "block";
+  document.getElementById("topicQuizProgress").style.display = "block";
+  document.getElementById("topicQuizCounter").style.display = "block";
+  currentQuiz = {
+    topic: topicKey,
+    questions: shuffleArray([...questions]),
+    currentQuestionIndex: 0,
+    score: 0,
+    answers: [],
+  };
+
+  openQuizModal();
+
+  startQuizTimer(topicKey);
+
+  renderQuizQuestion();
+}
+
+// Fisher-Yates shuffle
+function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+function startQuizTimer(topicKey) {
+  clearInterval(quizTimerInterval);
+  quizStartTime = Date.now();
+
+  updateQuizTimerDisplay(topicKey);
+
+  quizTimerInterval = setInterval(() => {
+    updateQuizTimerDisplay(topicKey);
+  }, 1000);
+}
+
+function stopQuizTimer() {
+  clearInterval(quizTimerInterval);
+
+  const elapsedSeconds = Math.floor((Date.now() - quizStartTime) / 1000);
+
+  return elapsedSeconds;
+}
+
+function updateQuizTimerDisplay(topicKey) {
+  const timerEl = document.getElementById("quizTimer");
+
+  const bestTimeEl = document.getElementById("bestQuizTime");
+
+  if (!timerEl || !bestTimeEl) return;
+
+  const elapsedSeconds = Math.floor((Date.now() - quizStartTime) / 1000);
+
+  timerEl.textContent = formatQuizTime(elapsedSeconds);
+
+  const bestTime = userProgress.bestQuizTimes[topicKey];
+
+  bestTimeEl.textContent = bestTime ? formatQuizTime(bestTime) : "--:--";
+}
+
+function formatQuizTime(seconds) {
+  const mins = Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, "0");
+
+  const secs = (seconds % 60).toString().padStart(2, "0");
+
+  return `${mins}:${secs}`;
+}
+
+// Quiz Modal
+
 
 // ==========================================
 // APP INITIALIZATION — handled by modules/init.js
@@ -463,11 +1112,6 @@ let workspaceSocket = null;
   `;
   document.head.appendChild(style);
 }());
-// ============================================
-// NAVBAR
-// ============================================
-let scrollPosition = 0;
-let navbarInitialized = false;
 // ============================================
 // QUIZ MODAL
 // ============================================
@@ -519,16 +1163,38 @@ let leaderboardRequestId = 0;
 const LEADERBOARD_LIMIT = 10;
 async function loadLeaderboard() {
   if (location.protocol === "file:") return { leaders: [], currentUserId: null };
-  const signal = apiAbort.getSignal('leaderboard');
+  const signal = window.apiAbort.getSignal('leaderboard');
   try {
-    // Cache leaderboard data for 5 minutes (300000 ms) with stale-while-revalidate
-    return await apiCache.fetchWithCache("/api/leaderboard", { credentials: "include", signal }, 300000, 'json');
+    return await window.apiCache.fetchWithCache("/api/leaderboard", { credentials: "include", signal }, 300000, 'json');
   } finally {
-    apiAbort.clearSignal('leaderboard');
+    window.apiAbort.clearSignal('leaderboard');
   }
 }
-let cachedSession = null;
-let progressSyncTimer = null;
+cachedSession = null;
+progressSyncTimer = null;
+
+// Handle coming back online
+window.addEventListener('online', async () => {
+    if (window.StorageDB && window.DB_STORES) {
+        const queue = await window.StorageDB.get(window.DB_STORES.SYNC_QUEUE, 'offlineSyncQueue') || [];
+        if (queue.length > 0) {
+            console.log("Reconnected. Syncing offline data...");
+            for (const payload of queue) {
+                try {
+                    await fetch("/api/progress", { 
+                      method: "PUT",
+                      credentials: "include", 
+                      headers: { "Content-Type": "application/json" }, 
+                      body: JSON.stringify(payload) 
+                    });
+                } catch(e) { console.error("Failed to sync", e); }
+            }
+            await window.StorageDB.set(window.DB_STORES.SYNC_QUEUE, 'offlineSyncQueue', []);
+            if (typeof updateLeaderboard === 'function') updateLeaderboard();
+        }
+    }
+});
+
 async function syncUserProgress() {
   const session = await getAuthenticatedSession();
   if (!session?.authenticated) return;
@@ -543,9 +1209,22 @@ async function syncUserProgress() {
 
   if (!navigator.onLine) {
     // Queue offline sync
-    let queue = JSON.parse(localStorage.getItem('offlineSyncQueue') || '[]');
-    queue.push(payload);
-    localStorage.setItem('offlineSyncQueue', JSON.stringify(queue));
+    if (window.StorageDB && window.DB_STORES) {
+        try {
+            let queue = await window.StorageDB.get(window.DB_STORES.SYNC_QUEUE, 'offlineSyncQueue') || [];
+            queue.push(payload);
+            await window.StorageDB.set(window.DB_STORES.SYNC_QUEUE, 'offlineSyncQueue', queue);
+        } catch(e) {
+            console.error("StorageDB unavailable, falling back to localStorage", e);
+            let queue = JSON.parse(localStorage.getItem('offlineSyncQueue') || '[]');
+            queue.push(payload);
+            localStorage.setItem('offlineSyncQueue', JSON.stringify(queue));
+        }
+    } else {
+        let queue = JSON.parse(localStorage.getItem('offlineSyncQueue') || '[]');
+        queue.push(payload);
+        localStorage.setItem('offlineSyncQueue', JSON.stringify(queue));
+    }
     
     // Register background sync if supported
     if ('serviceWorker' in navigator && 'SyncManager' in window) {
@@ -794,8 +1473,10 @@ const QUIZ_QUESTIONS = [
 ];
 let currentQuizIndex = 0;
 let quizSelections = [];
-if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', initializeQuizEditor);
-else initializeQuizEditor();
+if (typeof initializeQuizEditor === 'function') {
+  if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', initializeQuizEditor);
+  else initializeQuizEditor();
+}
 
 // ============================================
 // HASH CHANGE ROUTER
@@ -1256,60 +1937,7 @@ document.addEventListener('keydown', function(e) {
     setTimeout(setupProfileListeners, 200);
 })();
 
-// PWA Service Worker Registration & Lifecycle Management
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((registration) => {
-        void 0;
-        
-        if (registration.waiting) {
-          showUpdateToast(registration.waiting);
-        }
-        
-        registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              showUpdateToast(newWorker);
-            }
-          });
-        });
-      })
-      .catch((error) => {
-        void 0;
-      });
-      
-    navigator.serviceWorker.addEventListener('message', async (event) => {
-      if (event.data && event.data.type === 'PROCESS_OFFLINE_QUEUE') {
-        if (window.offlineStore && typeof window.offlineStore.syncQueue === 'function') {
-          void 0;
-          await window.offlineStore.syncQueue();
-        }
-      }
-    });
-    
-    if (navigator.storage && navigator.storage.estimate) {
-      navigator.storage.estimate().then(estimate => {
-        const usageMB = (estimate.usage / (1024 * 1024)).toFixed(2);
-        const quotaMB = (estimate.quota / (1024 * 1024)).toFixed(2);
-        const storageEl = document.getElementById('pwa-storage-usage');
-        if (storageEl) {
-          storageEl.textContent = `Offline Storage: ${usageMB} MB / ${quotaMB} MB`;
-        }
-      });
-    }
-  });
-}
-let refreshing = false;
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!refreshing) {
-      refreshing = true;
-      window.location.reload();
-    }
-  });
-}
+
 
 // Offline/Online status handler
 window.addEventListener('load', () => {
@@ -1656,13 +2284,6 @@ document.addEventListener('DOMContentLoaded', function() {
     initActivityFeed();
 });
 
-// This file is loaded via a classic <script> tag (not a module), so it
-// cannot use `export`. Its top-level function declarations above
-// (getActivities, getRecentActivities, addActivity, clearActivities,
-// renderActivityFeed, trackProblemSolved, trackQuizCompleted,
-// trackBadgeEarned, trackStreakMilestone, trackLevelUp, trackXPEarned,
-// trackPractice, initActivityFeed) are already globally accessible.
-
 // In your quiz completion function
 function completeQuiz(topic, score) {
     // ... existing code ...
@@ -1748,8 +2369,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Apply filter from URL if any
     applyFilterFromURL();
     
-    // Initial render
-    filterProblems();
+    // Only render problems if the page has a problems container
+    if (document.querySelector('.problems-list')) {
+        filterProblems();
+    }
 });
 
 /**
@@ -1834,6 +2457,7 @@ function filterProblemsByDifficulty(difficulty, problems) {
  * Filter problems with search and difficulty
  */
 function filterProblems() {
+    if (!document.querySelector('.problems-list')) return;
     const selectedDifficulty = getSelectedDifficulty();
     const allProblems = getAllProblems();
     const searchTerm = currentSearch || '';
@@ -1871,11 +2495,15 @@ function renderProblemsWithPagination(filteredProblems) {
     const end = Math.min(start + PROBLEMS_PER_PAGE, totalProblems);
     const pageProblems = filteredProblems.slice(start, end);
     
-    // Render the problems
-    renderProblems(pageProblems);
+    // Render the problems (only if function exists on this page)
+    if (typeof renderProblems === 'function') {
+        renderProblems(pageProblems);
+    }
     
     // Update pagination
-    updatePaginationControls(currentPage, totalPages);
+    if (typeof updatePaginationControls === 'function') {
+        updatePaginationControls(currentPage, totalPages);
+    }
 }
 
 /**

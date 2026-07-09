@@ -1232,6 +1232,12 @@ html.light-mode .recent-item.selected {
   margin: 0.5rem 0;
 }
 
+/* ─── Navbar highlight for landing page links ─── */
+.nav-highlight-item {
+  color: var(--accent-color, #f59e0b) !important;
+  font-weight: 600 !important;
+}
+
 .nav-auth-link {
   display: inline-flex;
   align-items: center;
@@ -2181,6 +2187,13 @@ section[id] {
   border-radius: 20px;
   font-size: 0.8rem;
   font-weight: 600;
+}
+
+.difficulty-badge .difficulty-icon {
+  margin-right: 0.35rem;
+  font-size: 0.95rem;
+  display: inline-block;
+  vertical-align: -0.05em;
 }
 
 .easy {
