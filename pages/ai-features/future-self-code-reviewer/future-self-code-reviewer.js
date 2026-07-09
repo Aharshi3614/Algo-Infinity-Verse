@@ -110,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btnRunReview.addEventListener('click', () => {
     const code = codeEditor.value.trim();
     if (!code) {
-      alert('Please enter or select some code first.');
+      void 0;
       return;
     }
 

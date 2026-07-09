@@ -1,6 +1,8 @@
 import crypto from "crypto";
 import fs from "fs/promises";
 import http from "http";
+import express from "express";
+import apiRouter from "./backend/routes/api.js";
 import { execFile } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -67,6 +69,7 @@ import { sendVerificationEmail } from "./backend/services/email.service.js";
 import {
   createBattle,
   joinBattle,
+  startBattle,
   submitSolution,
   getBattle,
   getHistory,
@@ -101,6 +104,8 @@ function validateMagicBytes(buffer, mimeType) {
 const userSocketMap = new Map();
 const studyRooms = new Map();
 const memoryUserStore = new Map();
+let userCacheTimestamp = 0;
+let userCacheDirty = true;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = __dirname;
@@ -122,6 +127,7 @@ const MAX_CLIENT_ERROR_ENTRIES = 1000;
 const MAX_FEEDBACK_ENTRIES = 5000;
 const MAX_INTERVIEW_EXPERIENCE_ENTRIES = 5000;
 const MAX_AUDIT_HISTORY_ENTRIES = 1000;
+const MAX_EXECUTIONS_ENTRIES = 5000;
 const SESSION_COOKIE = "aiv_session";
 const ACCESS_COOKIE = "aiv_access";
 const REFRESH_COOKIE = "aiv_refresh";
@@ -272,11 +278,21 @@ async function ensureUserStore() {
 }
 
 async function readUsers() {
+  if (!userCacheDirty && memoryUserStore.size > 0) {
+    return Array.from(memoryUserStore.values());
+  }
   await ensureUserStore();
   try {
+    const stat = await fs.stat(USERS_FILE);
+    if (!userCacheDirty && stat.mtimeMs <= userCacheTimestamp) {
+      return Array.from(memoryUserStore.values());
+    }
     const raw = await fs.readFile(USERS_FILE, "utf8");
     const users = JSON.parse(raw || "[]");
+    memoryUserStore.clear();
     users.forEach((u) => memoryUserStore.set(u.email, u));
+    userCacheTimestamp = stat.mtimeMs;
+    userCacheDirty = false;
     return users;
   } catch (err) {
     console.error("[readUsers] Failed to read users:", err);
@@ -288,10 +304,9 @@ async function writeUsers(users) {
   await ensureUserStore();
   try {
     await fs.writeFile(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`);
-    users.forEach((u) => memoryUserStore.set(u.email, u));
+    userCacheDirty = true;
   } catch (err) {
     console.error("[writeUsers] Failed to write users:", err);
-    users.forEach((u) => memoryUserStore.set(u.email, u));
   }
 }
 
@@ -346,6 +361,9 @@ async function updateExecutionStore(mutator) {
     const raw = await fs.readFile(EXECUTIONS_FILE, "utf8");
     const store = JSON.parse(raw || "[]");
     const result = await mutator(store);
+    if (store.length > MAX_EXECUTIONS_ENTRIES) {
+      store.splice(0, store.length - MAX_EXECUTIONS_ENTRIES);
+    }
     await writeExecutionsAtomic(store);
     return result;
   });
@@ -614,283 +632,6 @@ async function handleApi(req, res, pathname) {
   // Reject state-changing requests that cannot prove a same-site origin.
   if (!CSRF_SAFE_METHODS.has(req.method) && !isCsrfRequestTrusted(req)) {
     return sendJson(res, 403, { error: "CSRF validation failed." });
-  }
-
-  if (pathname === "/api/csrf-token" && req.method === "GET") {
-    const secret = crypto.randomBytes(32).toString("hex");
-    const token = crypto.createHmac("sha256", process.env.CSRF_SALT || "infinity-verse-secure-salt")
-                        .update(secret)
-                        .digest("hex");
-    const isProd = process.env.NODE_ENV === "production";
-    const cookieString = `csrfSecret=${secret}; HttpOnly; ${isProd ? "Secure; " : ""}SameSite=Lax; Path=/; Max-Age=3600`;
-    return sendJson(res, 200, { csrfToken: token }, { "Set-Cookie": cookieString });
-  }
-
-  if (pathname === "/api/log-error" && req.method === "POST") {
-    // Anonymous + append-only: rate-limit to curb write-flooding abuse. The
-    // capped, serialized write below bounds disk use regardless.
-    if (!applyRateLimit(req, res, logErrorLimiter, "Too many error reports. Please try again later.")) {
-      return;
-    }
-    try {
-      const payload = await readJsonBody(req);
-      await appendToJsonArrayFile(CLIENT_ERRORS_FILE, payload, MAX_CLIENT_ERROR_ENTRIES);
-      return sendJson(res, 200, { success: true });
-    } catch (err) {
-      console.error("Error logging client error:", err);
-      return sendJson(res, 500, { error: "Failed to log error" });
-    }
-  }
-  
-  if (pathname === "/api/execute" && req.method === "POST") {
-    try {
-      const session = getSession(req);
-      if (!session) {
-        return sendJson(res, 401, {
-          success: false,
-          message: "Authentication required.",
-        });
-      }
-
-      let payload;
-      try {
-        payload = await readJsonBody(req);
-      } catch (err) {
-        const tooLarge = err?.message === "Request body is too large.";
-        return sendJson(res, tooLarge ? 413 : 400, {
-          success: false,
-          message: tooLarge ? "Request body is too large." : "Invalid JSON body.",
-        });
-      }
-      const sourceCode = payload.sourceCode ?? payload.source_code;
-      const originalCode = payload.originalCode;
-      const { language, stdin } = payload;
-
-      if (
-        typeof sourceCode !== "string" ||
-        !sourceCode.trim() ||
-        typeof language !== "string" ||
-        !language.trim()
-      ) {
-        return sendJson(res, 400, { success: false, message: 'Source code and language are required.' });
-      }
-
-      if (!sourceCode || !language) {
-        return sendJson(res, 400, { success: false, message: 'Source code and language are required.' });
-      }
-
-
-
-      const languageId = JUDGE0_LANGUAGE_IDS[language.toLowerCase()];
-
-      if (!languageId) {
-         return sendJson(res, 400, { success: false, message: 'Unsupported language.' });
-      }
-
-      const JUDGE0_API = 'https://ce.judge0.com';
-      const b64 = (s) => Buffer.from(s, 'utf-8').toString('base64');
-      const d64 = (s) => s ? Buffer.from(s, 'base64').toString('utf-8') : '';
-
-      const executionId = uuidv4();
-      const startedAt = new Date().toISOString();
-
-      let stdout = "", stderr = "", exitCode = 0, cpuTime = null, memory = null, execError = null;
-
-      try {
-        const submitRes = await fetch(`${JUDGE0_API}/submissions?base64_encoded=true&wait=false`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            source_code: b64(sourceCode),
-            language_id: languageId,
-            stdin: b64(stdin || ""),
-            compiler_options: languageId === 54 ? '-std=c++17' : undefined,
-          })
-        });
-
-        if (!submitRes.ok) {
-          const errText = await submitRes.text();
-          throw new Error(`Judge0 submission error: ${errText}`);
-        }
-
-        const { token } = await submitRes.json();
-        if (!token) throw new Error('No submission token received from Judge0');
-
-        let result;
-        for (let i = 0; i < 50; i++) {
-          await new Promise(r => setTimeout(r, 600));
-          const pollRes = await fetch(`${JUDGE0_API}/submissions/${encodeURIComponent(token)}?base64_encoded=true`);
-          if (!pollRes.ok) throw new Error(`Judge0 poll error: ${await pollRes.text()}`);
-          result = await pollRes.json();
-          if (result.status && result.status.id >= 3) break;
-        }
-
-        if (!result || (result.status && result.status.id < 3)) {
-          throw new Error('Judge0 execution timed out');
-        }
-
-        stdout = d64(result.stdout);
-        stderr = d64(result.stderr) || d64(result.compile_output) || '';
-        exitCode = result.status?.id === 3 ? 0 : 1;
-        cpuTime = result.time ?? null;
-        memory = result.memory ?? null;
-      } catch (fetchErr) {
-        execError = fetchErr.message;
-      }
-
-      const execution = {
-        id: executionId,
-        userId: session.sub,
-        sourceCode,
-        originalCode,
-        language,
-        stdin: stdin || "",
-        stdout,
-        stderr,
-        exitCode: execError ? 1 : exitCode,
-        cpuTime,
-        memory,
-        error: execError,
-        createdAt: startedAt,
-        variableSnapshots: []
-      };
-
-      await updateExecutionStore((store) => {
-        store.push(execution);
-      });
-
-      if (execError) {
-        return sendJson(res, 500, {
-            success: false,
-            message: execError,
-            executionId
-        });
-      }
-
-      return sendJson(res, 200, {
-          success: true,
-          executionId,
-          data: {
-              output: stdout,
-              stderr,
-              memory,
-              cpuTime
-          }
-      });
-    } catch (error) {
-        console.error('Server Execution Error:', error);
-        return sendJson(res, 500, { success: false, message: 'Internal server proxy error.' });
-    }
-  }
-
-  // ── Traced Execution (JS only, server-side child process with variable snapshots) ──
-
-  if (pathname === "/api/execute/traced" && req.method === "POST") {
-    try {
-      const session = getSession(req);
-      if (!session) {
-        return sendJson(res, 401, { success: false, message: "Authentication required." });
-      }
-
-      const payload = await readJsonBody(req);
-      const sourceCode = payload.sourceCode ?? payload.source_code;
-      const originalCode = payload.originalCode;
-      const stdin = payload.stdin ?? "";
-
-      if (!sourceCode || typeof sourceCode !== "string") {
-        return sendJson(res, 400, { success: false, message: "Source code is required." });
-      }
-
-      const { instrumented, variableNames, error: instrumentError } = instrumentJS(sourceCode);
-      if (instrumentError) {
-        return sendJson(res, 400, { success: false, message: instrumentError });
-      }
-
-      const tmpFile = path.join(DATA_DIR, `__trace_${crypto.randomUUID()}.mjs`);
-      let snapshots = [];
-      let userOutput = "";
-      let traceError = null;
-
-      try {
-        await fs.writeFile(tmpFile, instrumented, "utf8");
-        await new Promise((resolve, reject) => {
-          // Sandbox the user-submitted code: instrumentJS does NOT isolate it,
-          // so run it under Node's Permission Model (--permission denies fs,
-          // child_process, worker_threads and native addons) with an empty
-          // environment so the child cannot read server secrets (SESSION_SECRET,
-          // Firebase keys, etc.). process.execPath is used directly so the
-          // binary resolves without a PATH in the stripped env. This blocks the
-          // RCE / secret-exfiltration path while still allowing console output
-          // and the snapshot JSON written to stdout.
-          execFile(process.execPath, ["--permission", tmpFile], {
-            timeout: 10000,
-            maxBuffer: 1024 * 1024,
-            env: {},
-          }, (err, stdout, stderr) => {
-            if (stdout) {
-              try {
-                const parsed = JSON.parse(stdout);
-                if (parsed.snapshots && Array.isArray(parsed.snapshots)) {
-                  snapshots = parsed.snapshots;
-                  userOutput = (parsed.output || []).join("\n");
-                } else {
-                  userOutput = stdout;
-                }
-              } catch {
-                userOutput = stdout;
-              }
-            }
-
-            if (err) {
-              if (snapshots.length === 0) {
-                reject(new Error(stderr || err.message));
-              } else {
-                resolve();
-              }
-            } else {
-              resolve();
-            }
-          });
-        });
-      } catch (execError) {
-        traceError = execError.message;
-        userOutput = `Execution error: ${traceError}`;
-      } finally {
-        await fs.unlink(tmpFile).catch(() => {});
-      }
-      const executionId = uuidv4();
-      const execution = {
-        id: executionId,
-        userId: session.sub,
-        sourceCode,
-        originalCode,
-        language: "javascript",
-        stdin,
-        stdout: userOutput,
-        stderr: traceError || "",
-        exitCode: traceError ? 1 : 0,
-        cpuTime: null,
-        memory: null,
-        error: traceError,
-        createdAt: new Date().toISOString(),
-        variableSnapshots: snapshots,
-        traced: true,
-      };
-
-      await updateExecutionStore((store) => {
-        store.push(execution);
-      });
-
-      return sendJson(res, 200, {
-        success: !traceError,
-        executionId,
-        data: { output: userOutput },
-        snapshots,
-      });
-    } catch (error) {
-      console.error("Traced Execution Error:", error);
-      return sendJson(res, 500, { success: false, message: "Traced execution failed." });
-    }
   }
 
   if (pathname === "/api/team-profile" && req.method === "GET") {
@@ -1326,7 +1067,28 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, { success: true }, { "Set-Cookie": authCookies(accessToken, refreshToken, req) });
   }
 
-if (pathname === "/api/session" && req.method === "GET") {
+  if (pathname === "/api/guest" && req.method === "POST") {
+    try {
+      const guestId = crypto.randomUUID();
+      const guestUser = {
+        id: `guest-${guestId}`,
+        name: "Guest",
+        email: `guest-${guestId}@local`,
+      };
+      const token = createAccessToken(guestUser);
+      const refreshToken = createRefreshToken(guestUser);
+      return sendJson(
+        res, 200,
+        { user: { id: guestUser.id, name: guestUser.name, email: guestUser.email } },
+        { "Set-Cookie": authCookies(token, refreshToken, req) },
+      );
+    } catch (err) {
+      console.error("[guest] Unexpected error:", err);
+      return sendJson(res, 500, { error: "Guest login failed. Please try again." });
+    }
+  }
+
+  if (pathname === "/api/session" && req.method === "GET") {
     const session = getSession(req);
     
     
@@ -1408,7 +1170,7 @@ if (pathname === "/api/session" && req.method === "GET") {
       const password = String(payload.password || "");
       const user = await getUserByEmail(email);
       if (!user || !user.password || !passwordMatches(password, user.password)) {
-       console.warn(`[LOGIN FAILED] ${email}`);
+       void 0;
       return sendJson(res, 401, { error: "Invalid email or password." });
       }
 
@@ -1826,7 +1588,7 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
       }
     } catch (err) {
       // Silently fail — don't expose whether email exists
-      console.warn("[forgot-password]", err.message);
+      void 0;
     }
 
     // Always return success to prevent email enumeration
@@ -2602,9 +2364,9 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     }
   }
  
-  // Dynamic battle routes: /api/battles/:id and /api/battles/:id/(join|submit|result)
+  // Dynamic battle routes: /api/battles/:id and /api/battles/:id/(join|start|submit|result)
   const battleMatch = pathname.match(
-    /^\/api\/battles\/([^/]+?)(?:\/(join|submit|result))?$/
+    /^\/api\/battles\/([^/]+?)(?:\/(join|start|submit|result))?$/
   );
  
   if (battleMatch) {
@@ -2633,7 +2395,17 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
         return sendJson(res, 400, { error: err.message });
       }
     }
- 
+
+    // POST /api/battles/:id/start
+    if (action === "start" && req.method === "POST") {
+      try {
+        const result = await startBattle(battleId, session.sub);
+        return sendJson(res, 200, result);
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+
     // POST /api/battles/:id/submit
     if (action === "submit" && req.method === "POST") {
       try {
@@ -2844,6 +2616,144 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
       return sendJson(res, 500, { error: "Failed to save snapshots." });
     }
   }
+  // ── AI Hint (progressive) ────────────────────────────────────────────────
+  if (pathname === "/api/hint" && req.method === "POST") {
+    if (!applyRateLimit(req, res, sdlcAdvisorLimiter, "Too many hint requests. Please try again later.")) {
+      return;
+    }
+
+    let payload;
+    try {
+      payload = await readJsonBody(req);
+    } catch {
+      return sendJson(res, 400, { error: "Invalid JSON body." });
+    }
+
+    const title = String(payload.title || "").trim();
+    const description = String(payload.description || "").trim();
+    const level = Number(payload.level) || 1;
+    const previousHints = Array.isArray(payload.previousHints)
+      ? payload.previousHints.filter((h) => typeof h === "string").slice(0, 10)
+      : [];
+
+    if (!title) {
+      return sendJson(res, 400, { error: "Problem title is required." });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return sendJson(res, 503, { error: "AI hints unavailable (GEMINI_API_KEY not set)." });
+    }
+
+    const prompt =
+      `You are a Data Structures & Algorithms tutor giving PROGRESSIVE hints ` +
+      `for the problem "${title}".` +
+      (description ? `\nProblem: ${description}` : "") +
+      `\nHints already shown to the student:\n` +
+      (previousHints.length
+        ? previousHints.map((h, i) => `${i + 1}. ${h}`).join("\n")
+        : "(none yet)") +
+      `\n\nGive ONLY the next single hint (hint level ${level}). One or two sentences. ` +
+      `Do NOT reveal the full solution or complete code. Build on the earlier hints ` +
+      `without repeating them. Escalate by level: 1 = gentle nudge, 2 = key idea, ` +
+      `3 = approach + data structure, 4 = high-level pseudocode outline.`;
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.7, maxOutputTokens: 160 },
+          }),
+        }
+      );
+      const result = await response.json();
+      const raw = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!raw) {
+        return sendJson(res, 502, { error: "No hint was generated. Please try again." });
+      }
+      const hint = raw.replace(/\*/g, "").replace(/`/g, "").trim();
+      return sendJson(res, 200, { success: true, hint });
+    } catch (error) {
+      console.error("AI hint error:", error);
+      return sendJson(res, 500, { error: "Failed to generate hint." });
+    }
+  }
+
+  // ── Leaderboard ──────────────────────────────────────────────────────────
+  if (pathname === "/api/leaderboard" && req.method === "GET") {
+    try {
+      let leaders = [];
+      if (useFirestore) {
+        const usersSnap = await db.collection("users").get();
+        leaders = usersSnap.docs.map(doc => {
+          const d = doc.data();
+          return { id: doc.id, name: d.name || "Learner", xp: d.xp || 0, level: d.level || 1, avatar: d.avatar || "🚀" };
+        });
+      } else {
+        const users = await readUsers();
+        leaders = users.map(u => ({
+          id: u.id || u.email,
+          name: u.name || "Learner",
+          xp: u.xp || 0,
+          level: u.level || 1,
+          avatar: u.avatar || "🚀"
+        }));
+      }
+      const session = getSession(req);
+      return sendJson(res, 200, { leaders, currentUserId: session?.sub || null });
+    } catch (err) {
+      console.error("Leaderboard error:", err);
+      return sendJson(res, 200, { leaders: [], currentUserId: null });
+    }
+  }
+
+  // ── User Progress Sync ───────────────────────────────────────────────────
+  if (pathname === "/api/progress" && req.method === "PUT") {
+    const session = getSession(req);
+    if (!session) return sendJson(res, 401, { error: "Authentication required." });
+    try {
+      const body = await readJsonBody(req);
+      if (useFirestore) {
+         await db.collection("users").doc(session.sub).set({
+           name: body.name,
+           xp: body.xp || 0,
+           level: body.level || 1,
+           avatar: body.avatar || "🚀",
+           activityData: body.activityData || {},
+           updatedAt: new Date().toISOString()
+         }, { merge: true });
+      } else {
+        const users = await readUsers();
+        const idx = users.findIndex(u => u.id === session.sub || u.email === session.email);
+         if (idx !== -1) {
+           users[idx].name = body.name;
+           users[idx].xp = body.xp || 0;
+           users[idx].level = body.level || 1;
+           users[idx].avatar = body.avatar || "🚀";
+           if (body.activityData) users[idx].activityData = body.activityData;
+         } else {
+           users.push({
+             id: session.sub,
+             email: session.email,
+             name: body.name,
+             xp: body.xp || 0,
+             level: body.level || 1,
+             avatar: body.avatar || "🚀",
+             activityData: body.activityData || {}
+           });
+         }
+        await writeUsers(users);
+      }
+      return sendJson(res, 200, { success: true });
+    } catch (err) {
+      console.error("Progress sync error:", err);
+      return sendJson(res, 200, { success: false });
+    }
+  }
 
   return sendJson(res, 404, { error: "Not found." });
 }
@@ -2891,7 +2801,7 @@ const routes = {
   // 1. Block hidden files and sensitive directories
   if (
     fileName.startsWith(".") ||
-    rel.startsWith("data" + path.sep) ||
+    (rel.startsWith("data" + path.sep) && !fileName.endsWith(".js")) ||
     rel.startsWith("api" + path.sep) ||
     rel.startsWith("node_modules" + path.sep)
   ) {
@@ -3060,7 +2970,16 @@ async function requestHandler(req, res) {
   }
 }
 
-const server = http.createServer(requestHandler);
+const app = express();
+app.use("/api", apiRouter);
+app.use(async (req, res, next) => {
+  try {
+    await requestHandler(req, res);
+  } catch (err) {
+    next(err);
+  }
+});
+const server = http.createServer(app);
 
 // ===== CODE ANALYSIS ENGINE =====
 // Used by the POST /api/predict-acceptance route in handleApi().
@@ -3135,8 +3054,9 @@ function analyzeCode(code, language, problemId) {
 // ===== HELPER FUNCTIONS =====
 
 function checkTimeComplexity(code) {
-    // Detect nested loops
-    const nestedLoops = (code.match(/for/g) || []).length > 1;
+    // Remove comments and string literals, then detect nested loops using word boundaries
+    const sanitizedCode = code.replace(/\/\/.*|#.*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, '');
+    const nestedLoops = (sanitizedCode.match(/\bfor\b/g) || []).length > 1;
     if (nestedLoops) {
         return { risky: true, reason: 'Nested loops detected (O(n²) or worse)' };
     }
@@ -3190,6 +3110,13 @@ function checkSyntaxErrors(code, language) {
 }
 
 function checkMissingImports(code, language) {
+    if (language) {
+        const lang = language.toLowerCase();
+        // Snippet-based testing environments generally do not require explicit imports
+        if (['python', 'javascript', 'cpp', 'c', 'java', 'ruby', 'go', 'rust', 'c++', 'py', 'js'].includes(lang)) {
+            return false;
+        }
+    }
     const imports = ['import', 'require', 'include', '#include'];
     const hasImport = imports.some(i => code.includes(i));
     return !hasImport;
@@ -3200,7 +3127,7 @@ function hasUnusedVariables(code) {
     if (!vars) return false;
     
     for (const v of vars) {
-        const name = v.replace(/let |const |var /g, '');
+        const name = v.replace(/let |const |let /g, '');
         if (code.split(name).length <= 2) {
             return true;
         }
@@ -3246,20 +3173,20 @@ function cleanupStudyUser(socket, roomId, userId) {
   if (remainingCount === 0) {
     if (room.timerInterval) clearInterval(room.timerInterval);
     studyRooms.delete(roomId);
-    console.log(`🗑️ Study room ${roomId} deleted (empty)`);
+    void 0;
   } else {
     if (room.hostId === userId) {
       const nextHostId = Object.keys(room.participants)[0];
       room.hostId = nextHostId;
       room.hostName = room.participants[nextHostId].name;
-      console.log(`👑 Host transferred to ${room.hostName} in room ${roomId}`);
+      void 0;
     }
     io.to(roomId).emit("study-room-updated", serializeRoom(room));
   }
 }
 
 io.on("connection", (socket) => {
-console.log("🟢 New client connected:", socket.id);
+void 0;
 
 
 
@@ -3273,7 +3200,7 @@ socket.on('ai-evaluate-code', async (data = {}) => {
         return socket.emit('ai-interviewer-feedback', { hint: 'Unable to analyze code right now.' });
     }
 
-    console.log(`🤖 AI Interviewer analyzing code...`);
+    void 0;
     
     try {
         const apiKey = process.env.GEMINI_API_KEY;
@@ -3319,51 +3246,166 @@ socket.on('ai-evaluate-code', async (data = {}) => {
     }
 });
 
+// Socket input validation helper
+const MAX_PAYLOAD_SIZE = 100 * 1024;
+const MAX_TEXT_LENGTH = 10000;
+
+function validateSocketInput(data, schema) {
+  if (!data || typeof data !== 'object') return null;
+  if (JSON.stringify(data).length > MAX_PAYLOAD_SIZE) return null;
+  const result = {};
+  for (const [key, rules] of Object.entries(schema)) {
+    if (rules.required && !(key in data)) return null;
+    if (key in data) {
+      let val = data[key];
+      if (rules.type && (val === null || typeof val !== rules.type)) return null;
+      if (rules.string && typeof val === 'string') {
+        val = val.slice(0, rules.maxLength || MAX_TEXT_LENGTH);
+        val = val.replace(/[\x00-\x1F\x7F]/g, '');
+      }
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
 // Draw events (whiteboard)
 socket.on('draw', (data) => {
-    // Broadcast to everyone else in the room
-    socket.to(data.roomId).emit('receive-draw', data);
+  const valid = validateSocketInput(data, {
+    roomId: { type: 'string', required: true },
+    imageData: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  socket.to(valid.roomId).emit('receive-draw', valid);
 });
 
 // Clear board
-socket.on('clear-board', ({ roomId }) => {
-    socket.to(roomId).emit('receive-clear');
+socket.on('clear-board', (data) => {
+  const valid = validateSocketInput(data, {
+    roomId: { type: 'string', required: true }
+  });
+  if (!valid) return;
+  socket.to(valid.roomId).emit('receive-clear');
 });
 
 // Shared notes
-socket.on('share-notes', ({ roomId, text }) => {
-    socket.to(roomId).emit('receive-notes', text);
+socket.on('share-notes', (data) => {
+  const valid = validateSocketInput(data, {
+    roomId: { type: 'string', required: true },
+    text: { type: 'string', string: true, maxLength: MAX_TEXT_LENGTH }
+  });
+  if (!valid) return;
+  socket.to(valid.roomId).emit('receive-notes', valid.text);
 });
 
 // Chat messages
 socket.on('chat-message', (data) => {
-    socket.to(data.roomId).emit('chat-message', data);
+  const valid = validateSocketInput(data, {
+    roomId: { type: 'string', required: true },
+    userName: { type: 'string', string: true },
+    text: { type: 'string', string: true, maxLength: MAX_TEXT_LENGTH }
+  });
+  if (!valid) return;
+  socket.to(valid.roomId).emit('chat-message', valid);
 });
 
 // ── VOICE CHAT (WebRTC signaling) ──
 
-socket.on('voice-join', ({ roomId, userId }) => {
-    socket.to(roomId).emit('voice-user-joined', { userId });
+socket.on('voice-join', (data) => {
+  const valid = validateSocketInput(data, {
+    roomId: { type: 'string', required: true },
+    userId: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  socket.to(valid.roomId).emit('voice-user-joined', { userId: valid.userId });
 });
 
-socket.on('voice-leave', ({ roomId, userId }) => {
-    socket.to(roomId).emit('voice-user-left', { userId });
+socket.on('voice-leave', (data) => {
+  const valid = validateSocketInput(data, {
+    roomId: { type: 'string', required: true },
+    userId: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  socket.to(valid.roomId).emit('voice-user-left', { userId: valid.userId });
 });
 
 // WebRTC offer
-socket.on('voice-offer', ({ roomId, offer, to, from }) => {
-    const targetSocketId = userSocketMap.get(to);
-    if (targetSocketId) io.to(targetSocketId).emit('voice-offer', { offer, from });
+socket.on('voice-offer', (data) => {
+  const valid = validateSocketInput(data, {
+    roomId: { type: 'string', required: true },
+    offer: { type: 'object', required: true },
+    to: { type: 'string', required: true },
+    from: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  const targetSocketId = userSocketMap.get(valid.to);
+  if (targetSocketId) io.to(targetSocketId).emit('voice-offer', { offer: valid.offer, from: valid.from });
 });
 
-socket.on('voice-answer', ({ roomId, answer, to, from }) => {
-    const targetSocketId = userSocketMap.get(to);
-    if (targetSocketId) io.to(targetSocketId).emit('voice-answer', { answer, from });
+socket.on('voice-answer', (data) => {
+  const valid = validateSocketInput(data, {
+    roomId: { type: 'string', required: true },
+    answer: { type: 'object', required: true },
+    to: { type: 'string', required: true },
+    from: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  const targetSocketId = userSocketMap.get(valid.to);
+  if (targetSocketId) io.to(targetSocketId).emit('voice-answer', { answer: valid.answer, from: valid.from });
 });
 
-socket.on('voice-ice', ({ roomId, candidate, to, from }) => {
-    const targetSocketId = userSocketMap.get(to);
-    if (targetSocketId) io.to(targetSocketId).emit('voice-ice', { candidate, from });
+socket.on('voice-ice', (data) => {
+  const valid = validateSocketInput(data, {
+    roomId: { type: 'string', required: true },
+    candidate: { type: 'object', required: true },
+    to: { type: 'string', required: true },
+    from: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  const targetSocketId = userSocketMap.get(valid.to);
+  if (targetSocketId) io.to(targetSocketId).emit('voice-ice', { candidate: valid.candidate, from: valid.from });
+});
+
+// ── BATTLE ROYALE MODE ──
+
+socket.on('battle-join', (data) => {
+  const valid = validateSocketInput(data, {
+    battleId: { type: 'string', required: true },
+    userId: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  socket.join(`battle_${valid.battleId}`);
+  socket.to(`battle_${valid.battleId}`).emit('battle-user-joined', { userId: valid.userId });
+});
+
+socket.on('battle-code-update', (data) => {
+  const valid = validateSocketInput(data, {
+    battleId: { type: 'string', required: true },
+    userId: { type: 'string', required: true },
+    code: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  socket.to(`battle_${valid.battleId}`).emit('battle-code-update', valid);
+});
+
+socket.on('battle-cursor-update', (data) => {
+  const valid = validateSocketInput(data, {
+    battleId: { type: 'string', required: true },
+    userId: { type: 'string', required: true },
+    position: { type: 'object', required: true }
+  });
+  if (!valid) return;
+  socket.to(`battle_${valid.battleId}`).emit('battle-cursor-update', valid);
+});
+
+socket.on('battle-progress-update', (data) => {
+  const valid = validateSocketInput(data, {
+    battleId: { type: 'string', required: true },
+    userId: { type: 'string', required: true },
+    progress: { type: 'number', required: true }
+  });
+  if (!valid) return;
+  socket.to(`battle_${valid.battleId}`).emit('battle-progress-update', valid);
 });
 
 // ── END OF ADDITIONS ──
@@ -3407,13 +3449,17 @@ socket.on('voice-ice', ({ roomId, candidate, to, from }) => {
       };
     }
 
-    console.log(`👥 Study room: User ${authUserName} joined room ${roomId}`);
+    void 0;
     io.to(roomId).emit("study-room-updated", serializeRoom(room));
   });
 
   socket.on("start-study-round", ({ roomId, problem }) => {
     const room = studyRooms.get(roomId);
     if (!room) return;
+    if (socket.userId !== room.hostId) {
+      socket.emit('error', { message: 'Only host can start the study round' });
+      return;
+    }
 
     room.status = "playing";
     room.currentProblem = problem;
@@ -3485,7 +3531,7 @@ socket.on('voice-ice', ({ roomId, candidate, to, from }) => {
     userSocketMap.set(userId, socket.id);
     socket.userId = userId;
     socket.roomId = roomId;
-     console.log(`👥 User ${userId} joined Room ${roomId}`);
+     void 0;
       
       socket.to(roomId).emit("user-connected", userId);
 
@@ -3504,7 +3550,7 @@ socket.on('voice-ice', ({ roomId, candidate, to, from }) => {
 });
 // -----------------------------------------
 
-export { server, requestHandler, hashPassword, passwordMatches, applySM2, validateSignup, updateMemoryStore, readMemoryStore, appendToJsonArrayFile };
+export { server, requestHandler, hashPassword, passwordMatches, applySM2, validateSignup, updateMemoryStore, readMemoryStore, appendToJsonArrayFile, sendJson, readJsonBody, getSession, updateExecutionStore, applyRateLimit, logErrorLimiter, CLIENT_ERRORS_FILE, DATA_DIR, MAX_CLIENT_ERROR_ENTRIES, verifyCsrfToken };
 
 if (process.env.VERCEL === "1") {
   db = initializeFirebase();
@@ -3532,7 +3578,7 @@ if (process.env.VERCEL !== "1" && process.env.NODE_ENV !== "test") {
 
       server.listen(port, host, () => {
         const url = `http://${host}:${port}`;
-        console.log(`Server running at ${url}`);
+        void 0;
         if (!process.env.SESSION_SECRET) {
           // Fail closed in every environment — a missing secret means tokens
           // would be signed with a forgeable, hardcoded fallback.

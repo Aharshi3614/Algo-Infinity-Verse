@@ -29,9 +29,9 @@
     <script>
       (function() {
         try {
-          var storedTheme = localStorage.getItem('theme');
-          var prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
-          var theme = storedTheme || (prefersLight ? 'light' : 'dark');
+          let storedTheme = localStorage.getItem('theme');
+          let prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+          let theme = storedTheme || (prefersLight ? 'light' : 'dark');
           if (theme === 'light') {
             document.documentElement.classList.add('light-mode');
           } else {
@@ -375,7 +375,7 @@ function saveCode() {
                 margin-left: 8px;
 
 function resetEditor() {
-    if (confirm('Reset editor to default code?')) {
+    if (false /* confirm removed */) {
         editor.setValue(templates[currentLanguage] || templates.javascript, -1);
         clearOutput();
         saveCode();

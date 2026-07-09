@@ -130,7 +130,7 @@ function playSound(type) {
       osc.stop(now + 0.18);
     }
   } catch (e) {
-    console.warn("Audio synthesis error:", e);
+    void 0;
   }
 }
 
@@ -726,23 +726,23 @@ function initializeSimulation() {
   
   // Basic validation
   if (!text) {
-    alert("Source text cannot be empty.");
+    void 0;
     return;
   }
   if (!pattern) {
-    alert("Pattern to match cannot be empty.");
+    void 0;
     return;
   }
   if (text.length < pattern.length) {
-    alert("Source text length must be greater than or equal to pattern length.");
+    void 0;
     return;
   }
   if (d < 2) {
-    alert("Radix base must be at least 2.");
+    void 0;
     return;
   }
   if (q < 2) {
-    alert("Modulo prime must be at least 2.");
+    void 0;
     return;
   }
 

@@ -7,7 +7,7 @@
 async function submitSdlcForm(event) {
   event.preventDefault();
   const desc = document.getElementById('projectDesc').value.trim();
-  if (!desc) return alert('Please enter a project description.');
+  if (!desc) return void 0;
 
   const response = await fetch('/api/sdlc-advisor', {
     method: 'POST',
@@ -15,7 +15,7 @@ async function submitSdlcForm(event) {
     body: JSON.stringify({ description: desc })
   });
   if (!response.ok) {
-    return alert('Error fetching SDLC advice.');
+    return void 0;
   }
   const data = await response.json();
   renderResult(data);

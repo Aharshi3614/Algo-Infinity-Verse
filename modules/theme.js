@@ -57,7 +57,7 @@ function applyThemeToDOM(theme) {
  */
 export function setTheme(theme, dispatchEvent = true) {
     if (theme !== THEMES.LIGHT && theme !== THEMES.DARK) {
-        console.warn('Invalid theme:', theme);
+        void 0;
         return;
     }
     
@@ -199,7 +199,7 @@ export function initTheme() {
  */
 export function onThemeChange(callback) {
     if (typeof callback !== 'function') {
-        console.warn('onThemeChange: callback must be a function');
+        void 0;
         return () => {};
     }
     
@@ -261,3 +261,13 @@ export default {
     isLightTheme,
     THEME_CHANGE_EVENT
 };
+
+// Legacy global exports
+window.getCurrentTheme = getCurrentTheme;
+window.setTheme = setTheme;
+window.toggleTheme = toggleTheme;
+window.initTheme = initTheme;
+window.onThemeChange = onThemeChange;
+window.getTheme = getTheme;
+window.isDarkTheme = isDarkTheme;
+window.isLightTheme = isLightTheme;

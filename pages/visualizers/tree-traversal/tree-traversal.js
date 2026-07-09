@@ -311,7 +311,7 @@ function initQuiz() {
       }
 
       if (!allAnswered) {
-        alert("Please answer all questions before submitting!");
+        void 0;
         return;
       }
 

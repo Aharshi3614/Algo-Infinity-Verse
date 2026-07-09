@@ -49,12 +49,12 @@ if (buttons.length > 1) {
             newPassword === "" ||
             confirmPassword === ""
         ) {
-            alert("Please fill all password fields.");
+            alert("Please fill in all password fields.");
             return;
         }
 
         if (newPassword !== confirmPassword) {
-            alert("Passwords do not match.");
+            alert("Passwords do not match. Please try again.");
             return;
         }
 
@@ -85,12 +85,10 @@ const deleteBtn = document.getElementById("deleteAccountBtn");
 
 if (deleteBtn) {
     deleteBtn.addEventListener("click", function () {
-        const confirmDelete = confirm(
-            "Are you sure you want to delete your account? This action cannot be undone."
-        );
+        const confirmDelete = false /* confirm removed */;
 
         if (confirmDelete) {
-            alert("Account deleted successfully (frontend only).");
+            alert("Account deletion is handled server-side. Please contact support to complete this action.");
             
         }
     });

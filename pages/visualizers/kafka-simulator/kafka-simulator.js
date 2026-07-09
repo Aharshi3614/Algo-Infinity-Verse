@@ -135,7 +135,7 @@
 
         // --- CONSUMER GROUP LOGIC ---
         function addConsumer() {
-            if (state.consumers.length >= 5) return alert("Max 5 consumers allowed for this demo.");
+            if (state.consumers.length >= 5) return void 0;
             
             const id = state.consumerIdCounter++;
             const color = CONSUMER_COLORS[(id - 1) % CONSUMER_COLORS.length];

@@ -7,7 +7,19 @@ function isCacheable(response) {
 }
 
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      // Precache critical files for offline sandbox functionality
+      return cache.addAll([
+        '/offline.html',
+        '/worker.js',
+        '/data/practice-problems.js',
+        '/data/quiz-questions.js',
+        '/data/dsa-topics.js',
+        '/modules/executeCode.js'
+      ]);
+    }).then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -67,7 +79,7 @@ self.addEventListener('fetch', (event) => {
           if (isCacheable(res)) tryCache(event.request, res, DYNAMIC_CACHE);
           return res;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() => caches.match(event.request).then(cached => cached || new Response('Offline', { status: 503 })))
     );
     return;
   }
@@ -80,7 +92,7 @@ self.addEventListener('fetch', (event) => {
           if (isCacheable(res)) tryCache(event.request, res, CACHE_NAME);
           return res;
         })
-        .catch(() => undefined);
+        .catch(() => new Response('Offline', { status: 503 }));
 
       return cached || fetchPromise;
     })

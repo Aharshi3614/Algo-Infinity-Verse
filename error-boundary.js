@@ -16,7 +16,7 @@
   // Function to report an error payload to the backend
   async function sendErrorToBackend(payload) {
     if (location.protocol === "file:") {
-      console.warn("Offline environment; skipping remote error report.", payload);
+      void 0;
       return;
     }
     try {
@@ -142,10 +142,21 @@
         <strong>Application Error</strong><br>
         <span style="opacity: 0.9; font-size: 0.75rem;">${escapeHtml(message)}</span>
       </div>
-      <button style="background:none; border:none; color:#fff; font-size:1.2rem; cursor:pointer; font-weight:bold; padding:0 4px;" onclick="this.parentElement.remove()">&times;</button>
+      <button
+          class="error-toast-close"
+          style="background:none; border:none; color:#fff; font-size:1.2rem; cursor:pointer; font-weight:bold; padding:0 4px;"
+          aria-label="Close error notification">
+          &times;
+      </button>
     `;
 
     document.body.appendChild(toast);
+
+    const closeButton = toast.querySelector(".error-toast-close");
+
+    closeButton?.addEventListener("click", () => {
+        toast.remove();
+    });
     
     // Automatically fade out after 6 seconds
     setTimeout(() => {

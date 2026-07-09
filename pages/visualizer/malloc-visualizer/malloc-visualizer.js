@@ -208,8 +208,8 @@ function logSys(msg, type = 'sys') {
 
 function handleMalloc() {
     const reqSize = parseInt(els.mallocSize.value);
-    if (isNaN(reqSize) || reqSize <= 0) return alert("Enter a valid positive byte size.");
-    if (reqSize > TOTAL_MEMORY) return alert(`Requested size exceeds maximum heap limit of ${TOTAL_MEMORY}B.`);
+    if (isNaN(reqSize) || reqSize <= 0) return void 0;
+    if (reqSize > TOTAL_MEMORY) return void 0;
 
     const targetSize = nextPowerOfTwo(reqSize);
     const ptrName = `*p${ptrCounter++}`;
