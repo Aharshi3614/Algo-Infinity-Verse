@@ -118,6 +118,7 @@ const DATA_DIR = IS_VERCEL
   : path.join(ROOT, "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 const MEMORY_FILE = path.join(DATA_DIR, "memory.json");
+<<<<<<< HEAD
 const TEAM_PROFILES_FILE = path.join(DATA_DIR, "team_profiles.json");
 const AUDITS_FILE = path.join(DATA_DIR, "audits_history.json");
 const EXECUTIONS_FILE = path.join(DATA_DIR, "executions.json");
@@ -131,6 +132,8 @@ const MAX_FEEDBACK_ENTRIES = 5000;
 const MAX_INTERVIEW_EXPERIENCE_ENTRIES = 5000;
 const MAX_AUDIT_HISTORY_ENTRIES = 1000;
 const MAX_EXECUTIONS_ENTRIES = 5000;
+=======
+>>>>>>> 96dcb23 (feat: add AI Code Memory Scanner with SM-2 spaced repetition (#360) (#377))
 const SESSION_COOKIE = "aiv_session";
 const ACCESS_COOKIE = "aiv_access";
 const REFRESH_COOKIE = "aiv_refresh";
@@ -314,6 +317,7 @@ async function readUsers() {
 
 async function writeUsers(users) {
   await ensureUserStore();
+<<<<<<< HEAD
   try {
     const tmpPath = `${USERS_FILE}.${process.pid}.${Date.now()}.tmp`;
     await fs.writeFile(tmpPath, `${JSON.stringify(users, null, 2)}\n`);
@@ -321,6 +325,119 @@ async function writeUsers(users) {
     userCacheDirty = true;
   } catch (err) {
     console.error("[writeUsers] Failed to write users:", err);
+=======
+  await fs.writeFile(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`);
+}
+
+// ── Memory Scanner (Spaced Repetition, SM-2) ─────────────────────────────────
+// NOTE: This currently uses local JSON file storage, matching the existing
+// users.json/feedback.json pattern in this codebase. In multi-instance or
+// serverless (VERCEL=1 / Firestore) deployments this is not a shared source
+// of truth. Migrating to Firestore (mirroring getUserByEmail/createUser's
+// useFirestore branching) is tracked as a follow-up.
+let memoryWriteQueue = Promise.resolve();
+
+async function ensureMemoryStore() {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  try {
+    await fs.access(MEMORY_FILE);
+  } catch {
+    await fs.writeFile(MEMORY_FILE, "{}\n");
+  }
+}
+
+async function readMemoryStore() {
+  await ensureMemoryStore();
+  const raw = await fs.readFile(MEMORY_FILE, "utf8");
+  return JSON.parse(raw || "{}");
+}
+
+async function writeMemoryStoreAtomic(filePath, store) {
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmpPath, `${JSON.stringify(store, null, 2)}\n`);
+  await fs.rename(tmpPath, filePath);
+}
+
+// Serializes read-modify-write cycles so concurrent /api/memory/* requests
+// cannot clobber each other's updates. `mutator` receives the current store
+// and must return the updated store.
+async function updateMemoryStore(mutator) {
+  const task = memoryWriteQueue.then(async () => {
+    await ensureMemoryStore();
+    const raw = await fs.readFile(MEMORY_FILE, "utf8");
+    const store = JSON.parse(raw || "{}");
+    const updated = await mutator(store);
+    await writeMemoryStoreAtomic(MEMORY_FILE, store);
+    return updated;
+  });
+
+  // Prevent one rejected task from permanently breaking the queue.
+  memoryWriteQueue = task.catch(() => {});
+  return task;
+}
+// SM-2 algorithm: quality is 0-5 (0 = total blackout, 5 = perfect recall)
+function applySM2(card, quality) {
+  const q = Math.max(0, Math.min(5, Number(quality)));
+  let { repetitions = 0, easeFactor = 2.5, interval = 0 } = card || {};
+
+  if (q < 3) {
+    repetitions = 0;
+    interval = 1;
+  } else {
+    repetitions += 1;
+    if (repetitions === 1) interval = 1;
+    else if (repetitions === 2) interval = 6;
+    else interval = Math.round(interval * easeFactor);
+  }
+
+  easeFactor = easeFactor + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02));
+  if (easeFactor < 1.3) easeFactor = 1.3;
+
+  const now = new Date();
+  const nextReviewDate = new Date(now);
+  nextReviewDate.setDate(now.getDate() + interval);
+
+  return {
+    topic: card?.topic,
+    repetitions,
+    easeFactor: Math.round(easeFactor * 100) / 100,
+    interval,
+    lastReviewed: now.toISOString(),
+    nextReviewDate: nextReviewDate.toISOString(),
+    lastQuality: q,
+  };
+}
+// ──────────────────────────────────────────────────────────────────────────
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const hash = crypto
+    .pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, PASSWORD_KEY_LENGTH, "sha256")
+    .toString("hex");
+  return { salt, hash, iterations: PBKDF2_ITERATIONS, digest: "sha256" };
+}
+
+function passwordMatches(password, stored) {
+  const calculated = crypto.pbkdf2Sync(
+    password,
+    stored.salt,
+    stored.iterations || PBKDF2_ITERATIONS,
+    PASSWORD_KEY_LENGTH,
+    stored.digest || "sha256",
+  );
+  const saved = Buffer.from(stored.hash, "hex");
+  return saved.length === calculated.length && crypto.timingSafeEqual(saved, calculated);
+}
+
+function validateSignup({ name, email, password, confirmPassword }) {
+  const cleanName = String(name || "").trim();
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  const rawPassword = String(password || "");
+  const rawConfirm = String(confirmPassword || "");
+
+  if (cleanName.length < 2) return "Name must be at least 2 characters.";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return "Enter a valid email address.";
+>>>>>>> 96dcb23 (feat: add AI Code Memory Scanner with SM-2 spaced repetition (#360) (#377))
   }
 }
 
@@ -1839,6 +1956,7 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     }
   }
 
+<<<<<<< HEAD
 
 
   if (pathname === "/api/user/profile" && req.method === "GET") {
@@ -2046,6 +2164,8 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     }
   }
 
+=======
+>>>>>>> 96dcb23 (feat: add AI Code Memory Scanner with SM-2 spaced repetition (#360) (#377))
   if (pathname === "/api/memory/log" && req.method === "POST") {
     const session = getSession(req);
     if (!session) return sendJson(res, 401, { error: "Login required." });
@@ -2061,6 +2181,7 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     if (!topic || typeof topic !== "string" || topic.trim().length < 1) {
       return sendJson(res, 400, { error: "Topic is required." });
     }
+<<<<<<< HEAD
     if (
       quality === undefined ||
       isNaN(Number(quality)) ||
@@ -2070,6 +2191,10 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
       return sendJson(res, 400, {
         error: "Quality must be a number between 0 and 5.",
       });
+=======
+    if (quality === undefined || isNaN(Number(quality)) || Number(quality) < 0 || Number(quality) > 5) {
+      return sendJson(res, 400, { error: "Quality must be a number between 0 and 5." });
+>>>>>>> 96dcb23 (feat: add AI Code Memory Scanner with SM-2 spaced repetition (#360) (#377))
     }
 
     const trimmedTopic = topic.trim();
@@ -2093,7 +2218,11 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     const userCards = store[session.sub] || {};
     const now = new Date();
     const due = Object.values(userCards).filter(
+<<<<<<< HEAD
       (card) => new Date(card.nextReviewDate) <= now,
+=======
+      (card) => new Date(card.nextReviewDate) <= now
+>>>>>>> 96dcb23 (feat: add AI Code Memory Scanner with SM-2 spaced repetition (#360) (#377))
     );
 
     return sendJson(res, 200, { success: true, due });
@@ -2106,6 +2235,7 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     const store = await readMemoryStore();
     const userCards = store[session.sub] || {};
 
+<<<<<<< HEAD
     return sendJson(res, 200, {
       success: true,
       cards: Object.values(userCards),
@@ -2923,6 +3053,9 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
       console.error("Progress sync error:", err);
       return sendJson(res, 200, { success: false });
     }
+=======
+    return sendJson(res, 200, { success: true, cards: Object.values(userCards) });
+>>>>>>> 96dcb23 (feat: add AI Code Memory Scanner with SM-2 spaced repetition (#360) (#377))
   }
 
   return sendJson(res, 404, { error: "Not found." });
