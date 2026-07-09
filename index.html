@@ -38,8 +38,7 @@
   <script type="importmap">
     {
       "imports": {
-        "firebase/app": "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js",
-        "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js"
+        "supabase-js": "https://esm.sh/@supabase/supabase-js@2"
       }
     }
     </script>
@@ -1229,6 +1228,18 @@
           </div>
           
 
+          <!-- Smart Review Queue Widget -->
+          <div class="dashboard-card review-queue-card">
+            <div class="card-header-with-actions">
+              <h3><i class="fas fa-brain"></i> Smart Review Queue</h3>
+            </div>
+            <div style="text-align: center; padding: 15px;">
+              <h1 id="reviewQueueCount" style="font-size: 3rem; margin: 0; color: var(--accent);">0</h1>
+              <p>concepts due for review today</p>
+              <a href="#problems" class="btn primary-btn" style="margin-top: 10px; display: inline-block;">Review Now</a>
+            </div>
+          </div>
+
           <!-- UPDATED: Recent Activity Card with Activity Feed -->
 
           <div class="dashboard-card activity-feed-card">
@@ -1493,11 +1504,12 @@
   <!-- Utility modules (plain scripts, globals) -->
   <script src="modules/abortManager.js"></script>
   <script src="modules/cacheManager.js"></script>
+  <script src="utils/storage.js"></script>
   <script src="modules/userProgress.js"></script>
   <script src="modules/spaced-repetition.js"></script>
   <script src="modules/utils.js"></script>
 
-  <script type="module" src="./modules/firebase-client.js"></script>
+  <script type="module" src="./modules/supabase-auth-client.js"></script>
   <script src="interceptors.js"></script>
   <script src="auth.js"></script>
   <script src="utils/virtualList.js"></script>
@@ -1505,6 +1517,7 @@
   <script src="timer.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="utils/searchEngine.js"></script>
+  <script src="utils/spacedRepetition.js"></script>
   <script type="module" src="modules/domSanitizer.js"></script>
   <script src="theme.js"></script>
   <script src="auth-gate.js"></script>

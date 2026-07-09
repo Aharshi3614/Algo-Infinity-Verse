@@ -1231,6 +1231,12 @@ html.light-mode .recent-item.selected {
   margin: 0.5rem 0;
 }
 
+/* ─── Navbar highlight for landing page links ─── */
+.nav-highlight-item {
+  color: var(--accent-color, #f59e0b) !important;
+  font-weight: 600 !important;
+}
+
 .nav-auth-link {
   display: inline-flex;
   align-items: center;
@@ -2180,6 +2186,13 @@ section[id] {
   border-radius: 20px;
   font-size: 0.8rem;
   font-weight: 600;
+}
+
+.difficulty-badge .difficulty-icon {
+  margin-right: 0.35rem;
+  font-size: 0.95rem;
+  display: inline-block;
+  vertical-align: -0.05em;
 }
 
 .easy {
@@ -6033,21 +6046,27 @@ html.light-mode .dropdown-menu {
 
 /* ===== SCROLLBAR STYLING ===== */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--dark-card);
+  background: var(--dark-bg, #0a0a1a);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--gradient-1);
-  border-radius: 5px;
+  background: var(--dark-card, #252550);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--primary-light);
+  background: var(--primary, #7c3aed);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--dark-card, #252550) var(--dark-bg, #0a0a1a);
 }
 
 /* ===== GLASSMORPHISM ===== */

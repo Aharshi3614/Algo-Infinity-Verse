@@ -1,4 +1,3 @@
-import crypto from "crypto";
 import fs from "fs/promises";
 import http from "http";
 import path from "path";
@@ -10,6 +9,9 @@ import { calculateATS } from "./resume-analyzer/atsScore.js";
 import { findMissingSkills } from "./resume-analyzer/skills.js";
 import { getSuggestions } from "./resume-analyzer/suggestions.js";
 import { setupApiRoutes } from "./routes/apiRoutes.js";
+import { CodingPersonalityAnalyzer } from "./personalityAnalyzer.js";
+import { applySM2 } from "./utils/sm2.js";
+import { getSession, clearSessionCookie } from "./utils/sessionToken.js";
 
 const MAX_RESUME_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 const upload = multer({
@@ -22,10 +24,7 @@ const __dirname = path.dirname(__filename);
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
-const CodingPersonalityAnalyzer = require("./personalityAnalyzer.js");
 const MEMORY_FILE = path.join(DATA_DIR, "memory.json");
-const SESSION_COOKIE = "aiv_session";
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
 // ── Rate limiting ────────────────────────────────────────────────────────────
 const SIGNUP_RATE_LIMIT = 5;
@@ -209,101 +208,6 @@ async function loadEnvFile() {
   }
 }
 
-function base64Url(input) {
-  return Buffer.from(input)
-    .toString("base64")
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
-
-function fromBase64Url(input) {
-  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
-  return Buffer.from(normalized, "base64").toString("utf8");
-}
-
-function sessionSecret() {
-  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("SESSION_SECRET is required in production.");
-  }
-  return "dev-only-change-me-with-SESSION_SECRET-before-deploying";
-}
-
-function sign(value) {
-  return crypto
-    .createHmac("sha256", sessionSecret())
-    .update(value)
-    .digest("base64url");
-}
-
-function createSessionToken(user) {
-  const header = base64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const payload = base64Url(
-    JSON.stringify({
-      sub: user.id,
-      name: user.name,
-      email: user.email,
-      exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS,
-    }),
-  );
-  const body = `${header}.${payload}`;
-  return `${body}.${sign(body)}`;
-}
-
-function verifySessionToken(token) {
-  if (!token) return null;
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [header, payload, signature] = parts;
-  const body = `${header}.${payload}`;
-  const expected = sign(body);
-  const signatureBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-  if (
-    signatureBuffer.length !== expectedBuffer.length ||
-    !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
-  ) {
-    return null;
-  }
-
-  try {
-    const session = JSON.parse(fromBase64Url(payload));
-    if (!session.exp || session.exp < Math.floor(Date.now() / 1000))
-      return null;
-    return session;
-  } catch {
-    return null;
-  }
-}
-
-function parseCookies(cookieHeader = "") {
-  return cookieHeader.split(";").reduce((cookies, part) => {
-    const [rawName, ...rawValue] = part.trim().split("=");
-    if (!rawName) return cookies;
-    cookies[rawName] = decodeURIComponent(rawValue.join("="));
-    return cookies;
-  }, {});
-}
-
-function sessionCookie(token, req) {
-  const secure = req.headers["x-forwarded-proto"] === "https";
-  return [
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
-    "HttpOnly",
-    "SameSite=Lax",
-    "Path=/",
-    `Max-Age=${SESSION_MAX_AGE_SECONDS}`,
-    secure ? "Secure" : "",
-  ]
-    .filter(Boolean)
-    .join("; ");
-}
-
-function clearSessionCookie() {
-  return `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
-}
-
 let db = null;
 let useFirestore = false;
 
@@ -398,38 +302,6 @@ async function updateMemoryStore(mutator) {
   memoryWriteQueue = task.catch(() => {});
   return task;
 }
-// SM-2 algorithm: quality is 0-5 (0 = total blackout, 5 = perfect recall)
-function applySM2(card, quality) {
-  const q = Math.max(0, Math.min(5, Number(quality)));
-  let { repetitions = 0, easeFactor = 2.5, interval = 0 } = card || {};
-
-  if (q < 3) {
-    repetitions = 0;
-    interval = 1;
-  } else {
-    repetitions += 1;
-    if (repetitions === 1) interval = 1;
-    else if (repetitions === 2) interval = 6;
-    else interval = Math.round(interval * easeFactor);
-  }
-
-  easeFactor = easeFactor + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02));
-  if (easeFactor < 1.3) easeFactor = 1.3;
-
-  const now = new Date();
-  const nextReviewDate = new Date(now);
-  nextReviewDate.setDate(now.getDate() + interval);
-
-  return {
-    topic: card?.topic,
-    repetitions,
-    easeFactor: Math.round(easeFactor * 100) / 100,
-    interval,
-    lastReviewed: now.toISOString(),
-    nextReviewDate: nextReviewDate.toISOString(),
-    lastQuality: q,
-  };
-}
 // ──────────────────────────────────────────────────────────────────────────
 
 function validateSignup({ name, email, password, confirmPassword }) {
@@ -519,11 +391,6 @@ function sendJson(res, status, body, headers = {}) {
 function redirect(res, location, headers = {}) {
   res.writeHead(302, { Location: location, ...headers });
   res.end();
-}
-
-function getSession(req) {
-  const cookies = parseCookies(req.headers.cookie || "");
-  return verifySessionToken(cookies[SESSION_COOKIE]);
 }
 
 function normalizePathname(pathname) {
@@ -727,43 +594,11 @@ if (process.env.VERCEL !== "1") {
       const port = Number(process.env.PORT || 3000);
       const host = process.env.HOST || "127.0.0.1";
 
-      // ===== CODING PERSONALITY =====
-      app.get("/api/user/personality", (req, res) => {
-        try {
-          const userId = req.user?.id || req.query.userId;
-
-          if (!userId) {
-            return res.status(401).json({ error: "User not authenticated" });
-          }
-
-          // Get user data - replace with actual DB fetch
-          const userData = {
-            problems: [],
-            submissions: [],
-            topics: [],
-            streak: 0,
-          };
-
-          const analyzer = new CodingPersonalityAnalyzer(userData);
-          const personality = analyzer.analyze();
-
-          res.json({
-            success: true,
-            data: personality,
-          });
-        } catch (error) {
-          console.error("Personality analysis error:", error);
-          res.status(500).json({ error: "Failed to analyze personality" });
-        }
-      });
-
       server.listen(port, host, () => {
         const url = `http://${host}:${port}`;
-        console.log(`Server running at ${url}`);
+        void 0;
         if (!process.env.SESSION_SECRET) {
-          console.warn(
-            "Using a development SESSION_SECRET. Set SESSION_SECRET before deploying.",
-          );
+          void 0;
         }
       });
     })

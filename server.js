@@ -22,6 +22,8 @@ import "./backend/jobs/worker.js"; // Initialize worker
 import { parse as csvParse } from "csv-parse/sync";
 import { v4 as uuidv4 } from "uuid";
 import { generateSdlcAdvice } from "./sdlcAdvisor.js";
+import lockfile from "proper-lockfile";
+import { fileTypeFromBuffer } from "file-type";
 
 const JUDGE0_LANGUAGE_IDS = {
   python:      71,
@@ -69,6 +71,7 @@ import { sendVerificationEmail } from "./backend/services/email.service.js";
 import {
   createBattle,
   joinBattle,
+  startBattle,
   submitSolution,
   getBattle,
   getHistory,
@@ -85,18 +88,19 @@ const uploadCsv = multer({
   limits: { fileSize: 2 * 1024 * 1024 } // 2MB limit
 }).single("csv");
 
-function validateMagicBytes(buffer, mimeType) {
-  if (!buffer || buffer.length < 4) return false;
-  const hex = buffer.slice(0, 4).toString("hex").toUpperCase();
+async function validateMagicBytes(buffer, mimeType) {
+  if (!buffer) return false;
+  const fileType = await fileTypeFromBuffer(buffer);
+  if (!fileType) return false;
   
   if (mimeType === "application/pdf") {
-    return hex === "25504446";
+    return fileType.mime === "application/pdf";
   }
   if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-    return hex === "504B0304";
+    return fileType.ext === "docx" || fileType.ext === "zip";
   }
   if (mimeType === "application/msword") {
-    return hex === "D0CF11E0";
+    return fileType.ext === "cfb" || fileType.mime === "application/x-cfb" || fileType.ext === "doc";
   }
   return false;
 }
@@ -151,6 +155,7 @@ const mimeTypes = {
   ".ico": "image/x-icon",
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".webp": "image/webp",
@@ -252,12 +257,20 @@ async function getUserByEmail(email) {
   return { ...snapshot.docs[0].data(), id: snapshot.docs[0].id };
 }
 
+let userWriteQueue = Promise.resolve();
+
 async function createUser(userData) {
   if (!useFirestore) {
-    const users = await readUsers();
-    users.push(userData);
-    await writeUsers(users);
-    return userData;
+    const task = userWriteQueue.then(async () => {
+      const users = await readUsers();
+      users.push(userData);
+      await writeUsers(users);
+      return userData;
+    });
+    userWriteQueue = task.catch((err) => {
+      console.error("[createUser] Write task failed:", err);
+    });
+    return task;
   }
   const docRef = await db.collection(COLLECTIONS.USERS).add(userData);
   return { ...userData, id: docRef.id };
@@ -302,7 +315,9 @@ async function readUsers() {
 async function writeUsers(users) {
   await ensureUserStore();
   try {
-    await fs.writeFile(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`);
+    const tmpPath = `${USERS_FILE}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(tmpPath, `${JSON.stringify(users, null, 2)}\n`);
+    await fs.rename(tmpPath, USERS_FILE);
     userCacheDirty = true;
   } catch (err) {
     console.error("[writeUsers] Failed to write users:", err);
@@ -479,21 +494,39 @@ function appendToJsonArrayFile(filePath, entry, maxEntries = 1000) {
   const previous = jsonArrayWriteQueues.get(filePath) || Promise.resolve();
   const task = previous.then(async () => {
     await fs.mkdir(DATA_DIR, { recursive: true });
-    let list = [];
+    
     try {
-      const raw = await fs.readFile(filePath, "utf8");
-      list = JSON.parse(raw || "[]");
-      if (!Array.isArray(list)) list = [];
-    } catch (err) {
-      if (err.code !== "ENOENT") throw err;
+      await fs.access(filePath);
+    } catch {
+      await fs.writeFile(filePath, "[]\n");
     }
-    list.push(entry);
-    if (list.length > maxEntries) {
-      list = list.slice(list.length - maxEntries);
+    
+    let release;
+    try {
+      release = await lockfile.lock(filePath, { retries: { retries: 5, minTimeout: 50, maxTimeout: 200 } });
+    } catch (lockErr) {
+      console.warn(`Failed to acquire lock on ${filePath}:`, lockErr.message);
     }
-    const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-    await fs.writeFile(tmpPath, `${JSON.stringify(list, null, 2)}\n`);
-    await fs.rename(tmpPath, filePath);
+
+    try {
+      let list = [];
+      try {
+        const raw = await fs.readFile(filePath, "utf8");
+        list = JSON.parse(raw || "[]");
+        if (!Array.isArray(list)) list = [];
+      } catch (err) {
+        if (err.code !== "ENOENT") throw err;
+      }
+      list.push(entry);
+      if (list.length > maxEntries) {
+        list = list.slice(list.length - maxEntries);
+      }
+      const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      await fs.writeFile(tmpPath, `${JSON.stringify(list, null, 2)}\n`);
+      await fs.rename(tmpPath, filePath);
+    } finally {
+      if (release) await release();
+    }
     return entry;
   });
   // Keep the chain alive even if one write rejects, so later writes still run.
@@ -518,8 +551,8 @@ async function readJsonBody(req) {
 }
 
 function sendJson(res, status, body, headers = {}) {
-  // Note: COOP header omitted to allow Firebase signInWithPopup to access popup.closed
-  // when opening cross-origin OAuth popups (Google, etc.)
+  // Note: COOP header omitted so the browser can read popup/redirect state for
+  // cross-origin OAuth flows (Supabase Google sign-in).
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     ...headers,
@@ -841,6 +874,32 @@ async function handleApi(req, res, pathname) {
     });
   }
 
+  if (pathname === "/api/supabase-config" && req.method === "GET") {
+    const url = process.env.SUPABASE_URL;
+    const anonKey = process.env.SUPABASE_ANON_KEY;
+
+    if (!url || !anonKey) {
+      return sendJson(res, 503, { configured: false, error: "Supabase not configured" });
+    }
+
+    return sendJson(res, 200, {
+      configured: true,
+      url,
+      anonKey,
+    });
+  }
+
+  if (pathname === "/api/csrf-token" && req.method === "GET") {
+    const secret = crypto.randomBytes(32).toString("hex");
+    const token = crypto
+      .createHmac("sha256", process.env.CSRF_SALT || "infinity-verse-secure-salt")
+      .update(secret)
+      .digest("hex");
+    const isProd = process.env.NODE_ENV === "production";
+    const cookieString = `csrfSecret=${secret}; HttpOnly; ${isProd ? "Secure; " : ""}SameSite=Lax; Path=/; Max-Age=3600`;
+    return sendJson(res, 200, { csrfToken: token }, { "Set-Cookie": cookieString });
+  }
+
   if (pathname === "/api/analyze-resume" && req.method === "POST") {
     if (!applyRateLimit(req, res, resumeAnalysisLimiter, "Too many resume analysis requests. Please try again later.")) {
       return;
@@ -866,7 +925,7 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, 400, { error: "Unsupported file type. Upload PDF or DOCX." });
       }
 
-      if (!validateMagicBytes(req.file.buffer, req.file.mimetype)) {
+      if (!(await validateMagicBytes(req.file.buffer, req.file.mimetype))) {
         return sendJson(res, 400, { error: "File content mismatch. The uploaded file's content does not match its type." });
       }
 
@@ -1018,7 +1077,7 @@ async function handleApi(req, res, pathname) {
 
   if (pathname.startsWith("/api/audit/bulk/") && req.method === "GET") {
     const batchId = pathname.split("/").pop();
-    const progress = getBatchProgress(batchId);
+    const progress = await getBatchProgress(batchId);
     if (!progress) {
       return sendJson(res, 404, { error: "Batch not found." });
     }
@@ -1029,8 +1088,8 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/logout" && req.method === "POST") {
     const rToken = getRefreshToken(req);
     if (rToken) {
-      const decoded = verifyRefreshToken(rToken);
-      if (decoded) revokeTokenFamily(decoded.familyId);
+      const decoded = await verifyRefreshToken(rToken);
+      if (decoded) await revokeTokenFamily(decoded.familyId);
     }
     return sendJson(res, 200, { success: true }, { "Set-Cookie": clearAuthCookies() });
   }
@@ -1039,9 +1098,9 @@ async function handleApi(req, res, pathname) {
     const rToken = getRefreshToken(req);
     if (!rToken) return sendJson(res, 401, { error: "No refresh token" });
     
-    const decoded = verifyRefreshToken(rToken);
+    const decoded = await verifyRefreshToken(rToken);
     if (!decoded) return sendJson(res, 401, { error: "Invalid or expired refresh token" }, { "Set-Cookie": clearAuthCookies() });
-    revokeTokenFamily(decoded.familyId);
+    await revokeTokenFamily(decoded.familyId);
 
     // Find user
     const users = useFirestore ? [] : await readUsers();
@@ -1061,7 +1120,7 @@ async function handleApi(req, res, pathname) {
     if (!user) return sendJson(res, 401, { error: "User not found" }, { "Set-Cookie": clearAuthCookies() });
 
     const accessToken = createAccessToken(user);
-    const refreshToken = createRefreshToken(user, decoded.familyId);
+    const refreshToken = await createRefreshToken(user, decoded.familyId);
     
     return sendJson(res, 200, { success: true }, { "Set-Cookie": authCookies(accessToken, refreshToken, req) });
   }
@@ -1075,7 +1134,7 @@ async function handleApi(req, res, pathname) {
         email: `guest-${guestId}@local`,
       };
       const token = createAccessToken(guestUser);
-      const refreshToken = createRefreshToken(guestUser);
+      const refreshToken = await createRefreshToken(guestUser);
       return sendJson(
         res, 200,
         { user: { id: guestUser.id, name: guestUser.name, email: guestUser.email } },
@@ -1126,7 +1185,8 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, 409, { error: "An account with this email already exists." });
       }
 
-      const verifyToken = crypto.randomBytes(32).toString("hex");
+      const emailConfigured = !!(process.env.EMAIL_USER && process.env.EMAIL_PASS);
+      const verifyToken = emailConfigured ? crypto.randomBytes(32).toString("hex") : null;
       const user = {
         id: crypto.randomUUID(),
         name: String(payload.name).trim(),
@@ -1135,18 +1195,20 @@ async function handleApi(req, res, pathname) {
         createdAt: new Date().toISOString(),
         isDeactivated: false,
         deactivatedAt: null,
-        emailVerified: false,
+        emailVerified: !emailConfigured,
         verifyToken,
-        verifyTokenExpiry: Date.now() + 24 * 60 * 60 * 1000,
+        verifyTokenExpiry: emailConfigured ? Date.now() + 24 * 60 * 60 * 1000 : null,
       };
       await createUser(user);
 
-      sendVerificationEmail(email, user.name, verifyToken).catch((err) =>
-        console.error("[email] Signup verification failed:", err)
-      );
+      if (emailConfigured) {
+        sendVerificationEmail(email, user.name, verifyToken).catch((err) =>
+          console.error("[email] Signup verification failed:", err)
+        );
+      }
 
       const token = createAccessToken(user);
-      const refreshToken = createRefreshToken(user);
+      const refreshToken = await createRefreshToken(user);
       loginLimiter.reset(getClientIdentifier(req));
       return sendJson(
         res, 200,
@@ -1169,11 +1231,11 @@ async function handleApi(req, res, pathname) {
       const password = String(payload.password || "");
       const user = await getUserByEmail(email);
       if (!user || !user.password || !passwordMatches(password, user.password)) {
-       console.warn(`[LOGIN FAILED] ${email}`);
+       void 0;
       return sendJson(res, 401, { error: "Invalid email or password." });
       }
 
-      if (!user.emailVerified) {
+      if (!user.emailVerified && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
         return sendJson(res, 403, {
           error: "Please verify your email before logging in.",
           requiresVerification: true,
@@ -1200,7 +1262,7 @@ async function handleApi(req, res, pathname) {
       }
 
       const token = createAccessToken(user);
-      const refreshToken = createRefreshToken(user);
+      const refreshToken = await createRefreshToken(user);
       loginLimiter.reset(getClientIdentifier(req));
       return sendJson(
         res, 200,
@@ -1213,110 +1275,220 @@ async function handleApi(req, res, pathname) {
     }
   }
 
-  if (pathname === "/api/auth/google" && req.method === "POST") {
-    if (!process.env.FIREBASE_PROJECT_ID) {
-      return sendJson(res, 500, { error: "Firebase is not configured for authentication. Set FIREBASE_PROJECT_ID environment variable." });
+  // ── Supabase JWT verification (HS256, signed with SUPABASE_JWT_SECRET) ─────
+  function base64UrlDecode(str) {
+    const normalized = str.replace(/-/g, "+").replace(/_/g, "/");
+    return Buffer.from(normalized, "base64");
+  }
+
+  function verifySupabaseJwt(token) {
+    const jwtSecret = process.env.SUPABASE_JWT_SECRET;
+    if (!jwtSecret) {
+      throw new Error("Supabase JWT secret not configured");
+    }
+
+    const parts = String(token).split(".");
+    if (parts.length !== 3) {
+      throw new Error("Malformed JWT");
+    }
+    const [headerB64, payloadB64, signatureB64] = parts;
+
+    let header;
+    try {
+      header = JSON.parse(base64UrlDecode(headerB64).toString("utf8"));
+    } catch {
+      throw new Error("Invalid JWT header");
+    }
+
+    if (header.alg !== "HS256") {
+      throw new Error("Unexpected JWT algorithm");
+    }
+
+    const expected = crypto
+      .createHmac("sha256", jwtSecret)
+      .update(`${headerB64}.${payloadB64}`)
+      .digest();
+    const provided = base64UrlDecode(signatureB64);
+
+    if (
+      expected.length !== provided.length ||
+      !crypto.timingSafeEqual(expected, provided)
+    ) {
+      throw new Error("Invalid JWT signature");
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(base64UrlDecode(payloadB64).toString("utf8"));
+    } catch {
+      throw new Error("Invalid JWT payload");
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof payload.exp === "number" && payload.exp < now) {
+      throw new Error("JWT expired");
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL;
+    if (supabaseUrl) {
+      const base = supabaseUrl.replace(/\/+$/, "");
+      if (payload.iss && !String(payload.iss).startsWith(base)) {
+        throw new Error("Invalid JWT issuer");
+      }
+      if (payload.aud !== "authenticated") {
+        throw new Error("Invalid JWT audience");
+      }
+    }
+
+    return payload;
+  }
+
+  // Upsert a user into Supabase Postgres via the PostgREST API (no extra
+  // dependency). Uses the service-role key so it can write regardless of RLS.
+  // This is the storage path used on serverless/Vercel, where the local
+  // filesystem is read-only and Firestore may be unconfigured.
+  async function upsertSupabaseUser(record, serviceKey, supabaseUrl) {
+    const base = (supabaseUrl || "").replace(/\/+$/, "");
+    const res = await fetch(`${base}/rest/v1/users?on_conflict=email`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        Prefer: "resolution=merge-upsert",
+      },
+      body: JSON.stringify([
+        {
+          id: record.id,
+          email: record.email,
+          name: record.name,
+          avatar: record.avatar,
+          supabase_id: record.supabaseId,
+          auth_provider: record.authProvider,
+          last_login: record.lastLogin,
+          updated_at: new Date().toISOString(),
+        },
+      ]),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`status ${res.status}: ${text}`);
+    }
+    return res.json();
+  }
+
+  if (pathname === "/api/auth/supabase" && req.method === "POST") {
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_JWT_SECRET) {
+      return sendJson(res, 500, { error: "Supabase is not configured for authentication. Set SUPABASE_URL and SUPABASE_JWT_SECRET environment variables." });
     }
 
     try {
       const body = await readJsonBody(req);
-      const { idToken } = body;
-      if (!idToken) {
-        return sendJson(res, 400, { error: "Missing idToken" });
+      const { accessToken } = body;
+      if (!accessToken) {
+        return sendJson(res, 400, { error: "Missing accessToken" });
       }
 
-      let decoded;
+      let claims;
       try {
-        // Cryptographically verify the Google ID token with the Firebase Admin
-        // SDK. verifyIdToken checks the RS256 signature against Google's public
-        // keys and validates the aud (project id), iss
-        // (securetoken.google.com/<project>) and exp claims — far stronger than
-        // the previous Identity Toolkit REST lookup with the public API key.
-        const { getAuth } = await import("firebase-admin/auth");
-        const decodedToken = await getAuth().verifyIdToken(idToken);
-        decoded = {
-          uid: decodedToken.uid,
-          email: decodedToken.email,
-          name: decodedToken.name || decodedToken.email,
-          picture: decodedToken.picture || null,
-          emailVerified: decodedToken.email_verified === true,
-        };
+        // Cryptographically verify the Supabase access token (HS256) using the
+        // Supabase JWT secret. This validates the signature and the aud/iss/exp
+        // claims — far stronger than trusting an opaque token.
+        claims = verifySupabaseJwt(accessToken);
       } catch (verifyError) {
-        console.error("Token verification failed:", verifyError.message);
+        console.error("Supabase token verification failed:", verifyError.message);
         return sendJson(res, 401, { error: "Invalid token" });
       }
 
-      // Enforce a Google-verified email. Only an email Google itself has
-      // verified is trusted, which is what makes the email-based account
-      // matching below safe from takeover.
-      if (!decoded.email) {
-        return sendJson(res, 400, { error: "Google token has no email." });
-      }
-      if (!decoded.emailVerified) {
-        return sendJson(res, 403, { error: "Google account email is not verified." });
+      const sub = claims.sub;
+      const email = claims.email;
+      if (!sub || !email) {
+        return sendJson(res, 400, { error: "Supabase token has no user identity." });
       }
 
-      const { uid, email, name, picture } = decoded;
-      const cleanEmail = (email || "").toLowerCase().trim();
-      const displayName = name || cleanEmail.split("@")[0] || "Learner";
-
-      let user = null;
-      if (!useFirestore) {
-        return sendJson(res, 503, { error: "User accounts require Firebase Firestore in serverless mode. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY environment variables." });
+      // Enforce a Supabase-verified email. Only an email the provider has
+      // verified is trusted, which makes the email-based account matching
+      // below safe from takeover.
+      if (!claims.email_verified) {
+        return sendJson(res, 403, { error: "Supabase account email is not verified." });
       }
-      const snapshot = await db
-        .collection(COLLECTIONS.USERS)
-        .where("firebaseUid", "==", uid)
-        .limit(1)
-        .get();
-      if (!snapshot.empty) {
-        user = { ...snapshot.docs[0].data(), id: snapshot.docs[0].id };
-      } else {
-        const emailSnapshot = await db
-          .collection(COLLECTIONS.USERS)
-          .where("email", "==", cleanEmail)
-          .limit(1)
-          .get();
-        if (!emailSnapshot.empty) {
-          const existing = { ...emailSnapshot.docs[0].data(), id: emailSnapshot.docs[0].id };
-          // Only link to an account that is itself Google-provisioned. Silently
-          // merging a Google login into a password account would let anyone with
-          // a matching Google address take it over (local signups are not
-          // email-verified), so require the user to sign in with their password.
-          const isGoogleAccount = existing.authProvider === "google" || !!existing.firebaseUid;
-          if (!isGoogleAccount) {
-            return sendJson(res, 409, {
-              error: "An account with this email already exists. Please sign in with your password.",
-            });
+
+      const meta = claims.user_metadata || {};
+      const cleanEmail = email.toLowerCase().trim();
+      const displayName =
+        meta.full_name || meta.name || cleanEmail.split("@")[0] || "Learner";
+      const picture = meta.avatar_url || meta.picture || null;
+
+      // Build the user record from the verified Supabase claims. Persistence is
+      // best-effort only: on serverless (Vercel) the filesystem is read-only and
+      // Firestore may be unconfigured, but the session JWT below already encodes
+      // the identity, so login must still succeed.
+      const existing = await getUserByEmail(cleanEmail).catch(() => null);
+      const userRecord = existing
+        ? {
+            ...existing,
+            name: displayName,
+            avatar: picture || existing.avatar,
+            lastLogin: new Date().toISOString(),
+            supabaseId: existing.supabaseId || sub,
+            authProvider: existing.authProvider || "google",
           }
-          user = existing;
+        : {
+            id: sub,
+            name: displayName,
+            email: cleanEmail,
+            avatar: picture || null,
+            supabaseId: sub,
+            authProvider: "google",
+            createdAt: new Date().toISOString(),
+            lastLogin: new Date().toISOString(),
+          };
+
+      // Persist the user. Prefer Supabase Postgres (writable from serverless /
+      // Vercel) when configured; otherwise best-effort Firestore / JSON store.
+      // Login still succeeds via the session JWT regardless of persistence.
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const supabaseUrl = process.env.SUPABASE_URL;
+      if (supabaseKey && supabaseUrl) {
+        try {
+          await upsertSupabaseUser(userRecord, supabaseKey, supabaseUrl);
+        } catch (persistError) {
+          console.error("Supabase user persistence failed:", persistError.message);
+        }
+      } else {
+        try {
+          if (existing) {
+            if (useFirestore) {
+              await db
+                .collection(COLLECTIONS.USERS)
+                .doc(existing.id)
+                .update({
+                  name: displayName,
+                  avatar: picture || null,
+                  lastLogin: new Date().toISOString(),
+                  supabaseId: sub,
+                  authProvider: "google",
+                });
+            } else {
+              const users = await readUsers();
+              const index = users.findIndex((u) => u.id === existing.id);
+              if (index !== -1) {
+                users[index] = userRecord;
+                await writeUsers(users);
+              }
+            }
+          } else {
+            await createUser(userRecord);
+          }
+        } catch (persistError) {
+          console.error("User persistence skipped:", persistError.message);
         }
       }
 
-      if (user) {
-        user.name = displayName;
-        user.avatar = picture || user.avatar;
-        user.lastLogin = new Date().toISOString();
-        if (!user.firebaseUid) user.firebaseUid = uid;
-        if (!user.authProvider) user.authProvider = "google";
-        await db.collection(COLLECTIONS.USERS).doc(user.id).update({
-          name: displayName, avatar: picture || null,
-          lastLogin: new Date().toISOString(),
-          firebaseUid: uid, authProvider: "google",
-        });
-      } else {
-        const newUser = {
-          id: uid, name: displayName, email: cleanEmail,
-          avatar: picture || null, firebaseUid: uid,
-          authProvider: "google",
-          createdAt: new Date().toISOString(),
-          lastLogin: new Date().toISOString(),
-        };
-        user = await createUser(newUser);
-      }
+      const user = userRecord;
 
       const token = createAccessToken(user);
-      const refreshToken = createRefreshToken(user);
+      const refreshToken = await createRefreshToken(user);
       const cookie = authCookies(token, refreshToken, req);
 
       return sendJson(res, 200, {
@@ -1325,8 +1497,11 @@ async function handleApi(req, res, pathname) {
       }, { "Set-Cookie": cookie });
 
     } catch (error) {
-      console.error("Google auth error:", error.message || error);
-      return sendJson(res, 500, { error: "Internal server error" });
+      console.error("Supabase auth error:", error && error.stack ? error.stack : error);
+      return sendJson(res, 500, {
+        error: "Internal server error",
+        detail: error?.message || String(error),
+      });
     }
   }
 
@@ -1565,29 +1740,25 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     }
 
     try {
-      const { initializeApp, getApps } = await import("firebase/app");
-      const { getAuth, sendPasswordResetEmail } = await import("firebase/auth");
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
-      const firebaseConfig = {
-        apiKey: process.env.FIREBASE_API_KEY,
-        authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-        messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-        appId: process.env.FIREBASE_APP_ID,
-      };
-
-      if (firebaseConfig.projectId) {
-        const existingApps = getApps();
-        const clientApp = existingApps.find(a => a.name === "reset-client") ||
-          initializeApp(firebaseConfig, "reset-client");
-
-        const auth = getAuth(clientApp);
-        await sendPasswordResetEmail(auth, email);
+      if (supabaseUrl && supabaseAnonKey) {
+        // Delegate password reset to Supabase (GoTrue). It returns 200
+        // regardless of whether the account exists, preventing enumeration.
+        await fetch(`${supabaseUrl.replace(/\/+$/, "")}/auth/v1/recover`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: supabaseAnonKey,
+            Authorization: `Bearer ${supabaseAnonKey}`,
+          },
+          body: JSON.stringify({ email }),
+        });
       }
     } catch (err) {
       // Silently fail — don't expose whether email exists
-      console.warn("[forgot-password]", err.message);
+      void 0;
     }
 
     // Always return success to prevent email enumeration
@@ -2363,9 +2534,9 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     }
   }
  
-  // Dynamic battle routes: /api/battles/:id and /api/battles/:id/(join|submit|result)
+  // Dynamic battle routes: /api/battles/:id and /api/battles/:id/(join|start|submit|result)
   const battleMatch = pathname.match(
-    /^\/api\/battles\/([^/]+?)(?:\/(join|submit|result))?$/
+    /^\/api\/battles\/([^/]+?)(?:\/(join|start|submit|result))?$/
   );
  
   if (battleMatch) {
@@ -2394,7 +2565,17 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
         return sendJson(res, 400, { error: err.message });
       }
     }
- 
+
+    // POST /api/battles/:id/start
+    if (action === "start" && req.method === "POST") {
+      try {
+        const result = await startBattle(battleId, session.sub);
+        return sendJson(res, 200, result);
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+
     // POST /api/battles/:id/submit
     if (action === "submit" && req.method === "POST") {
       try {
@@ -2445,7 +2626,7 @@ if (pathname === "/api/forgot-password" && req.method === "POST") {
     await writeUsers(users);
 
     const sessionToken = createAccessToken(users[idx]);
-    const refreshToken = createRefreshToken(users[idx]);
+    const refreshToken = await createRefreshToken(users[idx]);
     res.setHeader("Set-Cookie", authCookies(sessionToken, refreshToken, req));
     return sendJson(res, 200, { ok: true });
   }
@@ -2757,21 +2938,24 @@ const routes = {
   "/signup.html": "pages/auth/signup.html",
   "/verify-email": "pages/auth/verify-email.html",
   "/verify-email.html": "pages/auth/verify-email.html",
-    "/community": "community.html",
-    "/python-learning": "python-learning.html",
-    "/javascript-learning": "javascript-learning.html",
-    "/dbms-learning": "dbms-learning.html",
-    "/powerbi-learning": "powerbi-learning.html",
-    "/cplusplus-learning": "cplusplus-learning.html",
-    "/learning/php": "php-learning.html",
-    "/php-learning": "php-learning.html",
-    "/learning/oop": "oop-learning.html",
-    "/oop-learning": "oop-learning.html",
-    "/feedback": "feedback.html",
-    "/feedback.html": "feedback.html",
-    "/memory-scanner": "memory-scanner.html",
-    "/memory-scanner.html": "memory-scanner.html",
-    "/algorithm-timeline": "algorithm-timeline.html",
+    "/community": "pages/community/community/community.html",
+    "/community.html": "pages/community/community/community.html",
+    "/rust-learning": "rust-learning.html",
+    "/rust-learning.html": "rust-learning.html",
+    "/python-learning": "pages/learning/python-learning/python-learning.html",
+    "/javascript-learning": "pages/learning/javascript-learning/javascript-learning.html",
+    "/dbms-learning": "pages/learning/dbms-learning/dbms-learning.html",
+    "/powerbi-learning": "pages/learning/powerbi-learning/powerbi-learning.html",
+    "/cplusplus-learning": "pages/learning/cplusplus-learning/cplusplus-learning.html",
+    "/learning/php": "pages/learning/php-learning/php-learning.html",
+    "/php-learning": "pages/learning/php-learning/php-learning.html",
+    "/learning/oop": "pages/learning/oop-learning/oop-learning.html",
+    "/oop-learning": "pages/learning/oop-learning/oop-learning.html",
+    "/feedback": "pages/community/feedback/feedback.html",
+    "/feedback.html": "pages/community/feedback/feedback.html",
+    "/memory-scanner": "pages/tools/memory-scanner/memory-scanner.html",
+    "/memory-scanner.html": "pages/tools/memory-scanner/memory-scanner.html",
+    "/algorithm-timeline": "pages/visualizers/algorithm-timeline/algorithm-timeline.html",
     "/support-page": "support-page/index.html",
     "/support-page/": "support-page/index.html",
   };
@@ -3162,20 +3346,20 @@ function cleanupStudyUser(socket, roomId, userId) {
   if (remainingCount === 0) {
     if (room.timerInterval) clearInterval(room.timerInterval);
     studyRooms.delete(roomId);
-    console.log(`🗑️ Study room ${roomId} deleted (empty)`);
+    void 0;
   } else {
     if (room.hostId === userId) {
       const nextHostId = Object.keys(room.participants)[0];
       room.hostId = nextHostId;
       room.hostName = room.participants[nextHostId].name;
-      console.log(`👑 Host transferred to ${room.hostName} in room ${roomId}`);
+      void 0;
     }
     io.to(roomId).emit("study-room-updated", serializeRoom(room));
   }
 }
 
 io.on("connection", (socket) => {
-console.log("🟢 New client connected:", socket.id);
+void 0;
 
 
 
@@ -3189,7 +3373,7 @@ socket.on('ai-evaluate-code', async (data = {}) => {
         return socket.emit('ai-interviewer-feedback', { hint: 'Unable to analyze code right now.' });
     }
 
-    console.log(`🤖 AI Interviewer analyzing code...`);
+    void 0;
     
     try {
         const apiKey = process.env.GEMINI_API_KEY;
@@ -3355,6 +3539,48 @@ socket.on('voice-ice', (data) => {
   if (targetSocketId) io.to(targetSocketId).emit('voice-ice', { candidate: valid.candidate, from: valid.from });
 });
 
+// ── BATTLE ROYALE MODE ──
+
+socket.on('battle-join', (data) => {
+  const valid = validateSocketInput(data, {
+    battleId: { type: 'string', required: true },
+    userId: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  socket.join(`battle_${valid.battleId}`);
+  socket.to(`battle_${valid.battleId}`).emit('battle-user-joined', { userId: valid.userId });
+});
+
+socket.on('battle-code-update', (data) => {
+  const valid = validateSocketInput(data, {
+    battleId: { type: 'string', required: true },
+    userId: { type: 'string', required: true },
+    code: { type: 'string', string: true }
+  });
+  if (!valid) return;
+  socket.to(`battle_${valid.battleId}`).emit('battle-code-update', valid);
+});
+
+socket.on('battle-cursor-update', (data) => {
+  const valid = validateSocketInput(data, {
+    battleId: { type: 'string', required: true },
+    userId: { type: 'string', required: true },
+    position: { type: 'object', required: true }
+  });
+  if (!valid) return;
+  socket.to(`battle_${valid.battleId}`).emit('battle-cursor-update', valid);
+});
+
+socket.on('battle-progress-update', (data) => {
+  const valid = validateSocketInput(data, {
+    battleId: { type: 'string', required: true },
+    userId: { type: 'string', required: true },
+    progress: { type: 'number', required: true }
+  });
+  if (!valid) return;
+  socket.to(`battle_${valid.battleId}`).emit('battle-progress-update', valid);
+});
+
 // ── END OF ADDITIONS ──
 
 
@@ -3396,7 +3622,7 @@ socket.on('voice-ice', (data) => {
       };
     }
 
-    console.log(`👥 Study room: User ${authUserName} joined room ${roomId}`);
+    void 0;
     io.to(roomId).emit("study-room-updated", serializeRoom(room));
   });
 
@@ -3472,13 +3698,124 @@ socket.on('voice-ice', (data) => {
     io.to(roomId).emit("receive-study-chat", { userName, text });
   });
 
+  // ============================================================
+  // COLLABORATIVE WHITEBOARD (#1780)
+  // ============================================================
+  
+  socket.on("wb-join", (data) => {
+    const valid = validateSocketInput(data, {
+      roomId: { type: "string", required: true },
+      userId: { type: "string", required: true },
+      userName: { type: "string", required: true },
+      color: { type: "string", required: true }
+    });
+    if (!valid) return;
+    
+    const wbRoom = "wb_" + valid.roomId;
+    socket.join(wbRoom);
+    socket.wbRoomId = valid.roomId;
+    socket.wbUserId = valid.userId;
+    
+    socket.to(wbRoom).emit("wb-user-joined", valid);
+  });
+
+  socket.on("wb-stroke", (data) => {
+    const valid = validateSocketInput(data, {
+      roomId: { type: "string", required: true },
+      points: { type: "object", required: true }, // array of points
+      color: { type: "string", required: true },
+      size: { type: "number", required: true },
+      tool: { type: "string", required: true }
+    });
+    if (!valid) return;
+    socket.to("wb_" + valid.roomId).emit("wb-stroke", valid);
+  });
+
+  socket.on("wb-shape", (data) => {
+    const valid = validateSocketInput(data, {
+      roomId: { type: "string", required: true },
+      shape: { type: "string", required: true },
+      x0: { type: "number", required: true },
+      y0: { type: "number", required: true },
+      x1: { type: "number", required: true },
+      y1: { type: "number", required: true },
+      color: { type: "string", required: true },
+      size: { type: "number", required: true }
+    });
+    if (!valid) return;
+    socket.to("wb_" + valid.roomId).emit("wb-shape", valid);
+  });
+
+  socket.on("wb-text", (data) => {
+    const valid = validateSocketInput(data, {
+      roomId: { type: "string", required: true },
+      text: { type: "string", required: true },
+      x: { type: "number", required: true },
+      y: { type: "number", required: true },
+      color: { type: "string", required: true },
+      fontSize: { type: "number", required: true }
+    });
+    if (!valid) return;
+    socket.to("wb_" + valid.roomId).emit("wb-text", valid);
+  });
+
+  socket.on("wb-clear", (data) => {
+    const valid = validateSocketInput(data, {
+      roomId: { type: "string", required: true }
+    });
+    if (!valid) return;
+    socket.to("wb_" + valid.roomId).emit("wb-clear");
+  });
+
+  socket.on("wb-undo", (data) => {
+    const valid = validateSocketInput(data, {
+      roomId: { type: "string", required: true },
+      imageData: { type: "string", required: true }
+    });
+    if (!valid) return;
+    socket.to("wb_" + valid.roomId).emit("wb-undo", valid);
+  });
+
+  socket.on("wb-cursor", (data) => {
+    const valid = validateSocketInput(data, {
+      roomId: { type: "string", required: true },
+      userId: { type: "string", required: true },
+      userName: { type: "string", required: true },
+      x: { type: "number", required: true },
+      y: { type: "number", required: true },
+      color: { type: "string", required: true }
+    });
+    if (!valid) return;
+    socket.to("wb_" + valid.roomId).emit("wb-cursor", valid);
+  });
+
+  socket.on("wb-leave", (data) => {
+    const valid = validateSocketInput(data, {
+      roomId: { type: "string", required: true },
+      userId: { type: "string", required: true }
+    });
+    if (!valid) return;
+    const wbRoom = "wb_" + valid.roomId;
+    socket.to(wbRoom).emit("wb-user-left", valid);
+    socket.leave(wbRoom);
+  });
+
+  // Handle clean disconnect for whiteboard
+  socket.on("disconnect", () => {
+    if (socket.wbRoomId && socket.wbUserId) {
+      const wbRoom = "wb_" + socket.wbRoomId;
+      socket.to(wbRoom).emit("wb-user-left", { userId: socket.wbUserId });
+    }
+  });
+
+
   socket.on("join-room", (roomId, userId) => {
       socket.join(roomId);
       // Store user mapping
     userSocketMap.set(userId, socket.id);
     socket.userId = userId;
     socket.roomId = roomId;
-     console.log(`👥 User ${userId} joined Room ${roomId}`);
+     void 0;
       
       socket.to(roomId).emit("user-connected", userId);
 
@@ -3525,7 +3862,7 @@ if (process.env.VERCEL !== "1" && process.env.NODE_ENV !== "test") {
 
       server.listen(port, host, () => {
         const url = `http://${host}:${port}`;
-        console.log(`Server running at ${url}`);
+        void 0;
         if (!process.env.SESSION_SECRET) {
           // Fail closed in every environment — a missing secret means tokens
           // would be signed with a forgeable, hardcoded fallback.

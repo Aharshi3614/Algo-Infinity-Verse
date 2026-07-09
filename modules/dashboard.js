@@ -33,6 +33,7 @@ function updateDashboard() {
     updateRecentProblems();
     updateRecommendations();
     updateLeaderboard();
+    updateReviewQueueWidget();
     
     const grid = document.querySelector(".dashboard-grid");
     if (grid && !document.getElementById("personalityCard")) {
@@ -320,7 +321,7 @@ function updateLeaderboard(page = 1) {
         renderPaginationControls(false);
     }).catch(error => {
         if (error.name === 'AbortError') return;
-        console.warn("Could not load leaderboard:", error);
+        void 0;
         if (requestId !== leaderboardRequestId) return;
         renderLeaderboardRows([], getCurrentUserId(), { emptyMessage: "Leaderboard unavailable." });
         renderPaginationControls(true, true);
@@ -685,6 +686,14 @@ function positionHeatmapTooltip(e) {
 }
 
 window.renderActivityHeatmap = renderActivityHeatmap;
+
+function updateReviewQueueWidget() {
+    const countEl = document.getElementById('reviewQueueCount');
+    if (countEl && window.spacedRepetition) {
+        const dueItems = window.spacedRepetition.getDueItems();
+        countEl.textContent = dueItems.length;
+    }
+}
 
 export {
     initDashboard,
