@@ -1,4 +1,11 @@
 import { runUserCode } from '../backend/jsSandboxRunner.js';
+import { SESSION_COOKIE, verifySessionToken, parseCookies } from "../backend/utils/sessionToken.js";
+
+// ─── Auth helpers ──────────────────────────────────────────────────────────
+function getUser(req) {
+  const cookies = parseCookies(req.headers.cookie || "");
+  return verifySessionToken(cookies[SESSION_COOKIE]);
+}
 
 const LANGUAGE_IDS = {
   python:      71,
@@ -20,6 +27,13 @@ const LANGUAGE_IDS = {
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Auth check — running user-submitted code in a Docker container is
+  // expensive and must not be reachable anonymously.
+  const user = getUser(req);
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthorized — please log in' });
   }
 
   // Validate request body size via Content-Length header
