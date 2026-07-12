@@ -5,6 +5,17 @@
     "node": true,
     "jest": true
   },
+  "globals": {
+    "showNotification": "readonly",
+    "updateLeaderboard": "readonly",
+    "updateProfile": "readonly",
+    "saveUserData": "readonly",
+    "userProgress": "writable",
+    "cachedSession": "writable",
+    "renderPersonalityCard": "readonly",
+    "renderMistakeDnaCard": "readonly",
+    "openQuizEditor": "readonly"
+  },
   "extends": "eslint:recommended",
   "parserOptions": {
     "ecmaVersion": "latest",
