@@ -19,6 +19,7 @@ import {
   clearSessionCookie,
 } from "./sessionToken.js";
 import { COLLECTIONS } from "../../firebase.js";
+let userWriteQueue = Promise.resolve();
 
 export const DATA_DIR = path.join(process.cwd(), "data");
 
@@ -116,10 +117,15 @@ export async function readUsers() {
 }
 
 export async function writeUsers(users) {
-  const DATA_DIR = path.join(process.cwd(), "data");
-  const USERS_FILE = path.join(DATA_DIR, "users.json");
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`);
+  const task = userWriteQueue.then(async () => {
+    const DATA_DIR = path.join(process.cwd(), "data");
+    const USERS_FILE = path.join(DATA_DIR, "users.json");
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`);
+  });
+  // Update the queue synchronously so next write waits for this one
+  userWriteQueue = task.catch(() => { });
+  return task;
 }
 
 export async function getUserByEmail(email, useFirestore = false, db = null) {
@@ -156,4 +162,55 @@ export function hashPassword(password) {
 
 export function passwordMatches(password, stored) {
   return passwordMatchesSecure(password, stored);
+}
+// ── Atomic User Creation (To prevent race conditions on signup) ──────────────
+let _createUserLock = Promise.resolve();
+
+export async function createUserAtomic(userData, useFirestore = false, db = null) {
+  // Case 1: Firestore (Uses native transaction)
+  if (useFirestore) {
+    try {
+      const userRef = db.collection(COLLECTIONS.USERS);
+      const result = await db.runTransaction(async (t) => {
+        const snapshot = await t.get(userRef.where('email', '==', userData.email).limit(1));
+        if (!snapshot.empty) {
+          throw new Error('User already exists');
+        }
+        const newUserRef = userRef.doc();
+        const newUser = { ...userData, id: newUserRef.id };
+        t.set(newUserRef, newUser);
+        return newUser;
+      });
+      return result;
+    } catch (error) {
+      if (error.message === 'User already exists') throw error;
+      console.error('Transaction error:', error);
+      throw new Error('Failed to create user');
+    }
+  }
+
+  // Case 2: Local JSON (Uses a Promise Lock to serialize writes)
+  const run = _createUserLock.then(async () => {
+    const users = await readUsers();
+    const existing = users.find((u) => u.email === userData.email);
+    if (existing) {
+      throw new Error('User already exists');
+    }
+    users.push(userData);
+    await writeUsers(users);
+    return userData;
+  });
+
+  // Update the lock synchronously so the next caller queues behind this write.
+  _createUserLock = run.catch(() => { });
+  return run;
+}
+export async function ensureUserStore() {
+  const DATA_DIR = path.join(process.cwd(), "data");
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  try {
+    await fs.access(path.join(DATA_DIR, "users.json"));
+  } catch {
+    await fs.writeFile(path.join(DATA_DIR, "users.json"), "[]\n");
+  }
 }

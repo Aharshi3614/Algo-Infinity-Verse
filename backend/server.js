@@ -12,11 +12,37 @@ import { setupApiRoutes } from "./routes/apiRoutes.js";
 import { CodingPersonalityAnalyzer } from "./personalityAnalyzer.js";
 import { applySM2 } from "./utils/sm2.js";
 import { getSession, clearSessionCookie } from "./utils/sessionToken.js";
+import { commonPasswords } from "./config/passwordBlacklist.js";
+import { validateAndNormalizeEmail } from "./utils/emailValidation.js";
+import securityConfig from "./config/security.js";
+import {
+  ensureUserStore,
+  readUsers,
+  writeUsers,
+  getUserByEmail,
+  createUser,
+} from "./utils/helpers.js";
+import { protectedPaths } from "./config/protectedPaths.js";
+import { getClientIdentifier } from "./utils/clientIdentifier.js";
 
 const MAX_RESUME_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_RESUME_FILE_SIZE_BYTES, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      'application/pdf',                                                      // .pdf
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+      'application/msword'                                                    // .doc
+    ];
+
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true); // Accept file
+    } else {
+      cb(new Error('Invalid file type. Only PDF, DOC, and DOCX files are allowed.'), false); // Reject file
+    }
+  }
 }).single("resume");
 
 const __filename = fileURLToPath(import.meta.url);
@@ -27,8 +53,7 @@ const USERS_FILE = path.join(DATA_DIR, "users.json");
 const MEMORY_FILE = path.join(DATA_DIR, "memory.json");
 
 // ── Rate limiting ────────────────────────────────────────────────────────────
-const SIGNUP_RATE_LIMIT = 5;
-const SIGNUP_WINDOW_MS = 15 * 60 * 1000;
+
 const signupAttempts = new Map();
 
 // Periodic sweeper — runs every SIGNUP_WINDOW_MS and deletes any identifier
@@ -38,14 +63,14 @@ const signupAttempts = new Map();
 const _signupSweeper = setInterval(() => {
   const now = Date.now();
   for (const [identifier, timestamps] of signupAttempts) {
-    const fresh = timestamps.filter((t) => now - t < SIGNUP_WINDOW_MS);
+    const fresh = timestamps.filter((t) => now - t < securityConfig.SIGNUP_WINDOW_MS);
     if (fresh.length === 0) {
       signupAttempts.delete(identifier);
     } else {
       signupAttempts.set(identifier, fresh);
     }
   }
-}, SIGNUP_WINDOW_MS);
+},securityConfig.SIGNUP_WINDOW_MS);
 
 // Allow the process to exit cleanly even while the interval is live
 // (relevant in test environments and graceful-shutdown scenarios).
@@ -61,34 +86,14 @@ const TRUSTED_PROXIES = new Set(
     .filter(Boolean),
 );
 
-function getClientIdentifier(req) {
-  const remoteAddress = req.socket?.remoteAddress || "unknown";
-
-  // Only honour X-Forwarded-For when the immediate TCP caller is a
-  // known trusted proxy — otherwise an attacker can supply any value
-  // they like and trivially bypass rate limiting.
-  if (
-    remoteAddress !== "unknown" &&
-    TRUSTED_PROXIES.has(remoteAddress) &&
-    req.headers["x-forwarded-for"]
-  ) {
-    // The left-most entry is the original client IP added by the
-    // first proxy in the chain; everything to the right can be spoofed.
-    const leftmost = req.headers["x-forwarded-for"].split(",")[0].trim();
-    if (leftmost) return leftmost;
-  }
-
-  return remoteAddress;
-}
-
 function isSignupRateLimited(identifier) {
   const now = Date.now();
   const attempts = signupAttempts.get(identifier) || [];
   // Trim stale timestamps on every read so the per-identifier array stays
   // small even between sweeper runs.
-  const recentAttempts = attempts.filter((t) => now - t < SIGNUP_WINDOW_MS);
+  const recentAttempts = attempts.filter((t) => now - t <securityConfig.SIGNUP_WINDOW_MS);
   signupAttempts.set(identifier, recentAttempts);
-  return recentAttempts.length >= SIGNUP_RATE_LIMIT;
+  return recentAttempts.length >= securityConfig.SIGNUP_RATE_LIMIT;
 }
 
 function recordSignupAttempt(identifier) {
@@ -96,31 +101,29 @@ function recordSignupAttempt(identifier) {
   const attempts = signupAttempts.get(identifier) || [];
   // Trim before appending so the array never accumulates beyond
   // SIGNUP_RATE_LIMIT + 1 entries between sweeper passes.
-  const recentAttempts = attempts.filter((t) => now - t < SIGNUP_WINDOW_MS);
+  const recentAttempts = attempts.filter((t) => now - t <securityConfig.SIGNUP_WINDOW_MS);
   recentAttempts.push(now);
   signupAttempts.set(identifier, recentAttempts);
 }
 
 async function normalizeAuthDelay() {
-  return new Promise((resolve) => setTimeout(resolve, 500));
+  return new Promise((resolve) => setTimeout(resolve, securityConfig.AUTH_DELAY_MS));
 }
 // ── Login Rate Limiting (failed attempts only) ──────────────────────────────
-const LOGIN_RATE_LIMIT = 5; // max failed attempts before lockout
-const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15-minute sliding window
 const loginFailures = new Map(); // identifier → [timestamp, ...]
 
 // Periodic sweeper — mirrors the signup sweeper to prevent unbounded growth.
 const _loginSweeper = setInterval(() => {
   const now = Date.now();
   for (const [identifier, timestamps] of loginFailures) {
-    const fresh = timestamps.filter((t) => now - t < LOGIN_WINDOW_MS);
+    const fresh = timestamps.filter((t) => now - t < securityConfig.LOGIN_WINDOW_MS);
     if (fresh.length === 0) {
       loginFailures.delete(identifier);
     } else {
       loginFailures.set(identifier, fresh);
     }
   }
-}, LOGIN_WINDOW_MS);
+}, securityConfig.LOGIN_WINDOW_MS);
 if (_loginSweeper.unref) _loginSweeper.unref();
 
 /**
@@ -130,9 +133,9 @@ if (_loginSweeper.unref) _loginSweeper.unref();
 function isLoginRateLimited(identifier) {
   const now = Date.now();
   const attempts = loginFailures.get(identifier) || [];
-  const recent = attempts.filter((t) => now - t < LOGIN_WINDOW_MS);
+  const recent = attempts.filter((t) => now - t < securityConfig.LOGIN_WINDOW_MS);
   loginFailures.set(identifier, recent); // keep array trimmed
-  return recent.length >= LOGIN_RATE_LIMIT;
+  return recent.length >=securityConfig.LOGIN_RATE_LIMIT;
 }
 
 /**
@@ -142,7 +145,7 @@ function isLoginRateLimited(identifier) {
 function recordLoginFailure(identifier) {
   const now = Date.now();
   const attempts = loginFailures.get(identifier) || [];
-  const recent = attempts.filter((t) => now - t < LOGIN_WINDOW_MS);
+  const recent = attempts.filter((t) => now - t < securityConfig.LOGIN_WINDOW_MS);
   recent.push(now);
   loginFailures.set(identifier, recent);
 }
@@ -155,14 +158,6 @@ function clearLoginFailures(identifier) {
   loginFailures.delete(identifier);
 }
 // ────────────────────────────────────────────────────────────────────────────
-
-const protectedPaths = new Set([
-  "/community",
-  "/community.html",
-  "/support-page",
-  "/support-page/",
-  "/support-page/index.html",
-]);
 
 const mimeTypes = {
   ".css": "text/css; charset=utf-8",
@@ -210,51 +205,6 @@ async function loadEnvFile() {
 
 let db = null;
 let useFirestore = false;
-
-async function getUserByEmail(email) {
-  if (!useFirestore) {
-    const users = await readUsers();
-    return users.find((u) => u.email === email) || null;
-  }
-  const snapshot = await db
-    .collection(COLLECTIONS.USERS)
-    .where("email", "==", email)
-    .limit(1)
-    .get();
-  if (snapshot.empty) return null;
-  return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
-}
-
-async function createUser(userData) {
-  if (!useFirestore) {
-    const users = await readUsers();
-    users.push(userData);
-    await writeUsers(users);
-    return userData;
-  }
-  const docRef = await db.collection(COLLECTIONS.USERS).add(userData);
-  return { id: docRef.id, ...userData };
-}
-
-async function ensureUserStore() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  try {
-    await fs.access(USERS_FILE);
-  } catch {
-    await fs.writeFile(USERS_FILE, "[]\n");
-  }
-}
-
-async function readUsers() {
-  await ensureUserStore();
-  const raw = await fs.readFile(USERS_FILE, "utf8");
-  return JSON.parse(raw || "[]");
-}
-
-async function writeUsers(users) {
-  await ensureUserStore();
-  await fs.writeFile(USERS_FILE, `${JSON.stringify(users, null, 2)}\n`);
-}
 
 // ── Memory Scanner (Spaced Repetition, SM-2) ─────────────────────────────────
 // NOTE: This currently uses local JSON file storage, matching the existing
@@ -306,68 +256,43 @@ async function updateMemoryStore(mutator) {
 
 function validateSignup({ name, email, password, confirmPassword }) {
   const cleanName = String(name || "").trim();
-  const cleanEmail = String(email || "")
-    .trim()
-    .toLowerCase();
   const rawPassword = String(password || "");
   const rawConfirm = String(confirmPassword || "");
 
-  if (cleanName.length < 2) return "Name must be at least 2 characters.";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-    return "Enter a valid email address.";
-  }
+  if (cleanName.length < 2) return { isValid: false, error: "Name must be at least 2 characters." };
 
-  // Strong Password Validation
-  if (rawPassword.length < 8) {
-    return "Password must be at least 8 characters long.";
+  // ✅ Reusable email validator
+  const emailValidation = validateAndNormalizeEmail(email);
+  if (!emailValidation.valid) {
+    return { isValid: false, error: emailValidation.error };
   }
-  if (rawPassword.length > 64) {
-    return "Password must not exceed 64 characters.";
-  }
-  if (!/[a-z]/.test(rawPassword)) {
-    return "Password must include at least one lowercase letter.";
-  }
-  if (!/[A-Z]/.test(rawPassword)) {
-    return "Password must include at least one uppercase letter.";
-  }
-  if (!/\d/.test(rawPassword)) {
-    return "Password must include at least one number.";
-  }
-  if (!/[!@#$%^&*()_+\-=\[\]{};:'"|,.<>?/~`]/.test(rawPassword)) {
-    return "Password must include at least one special character (!@#$%^&* etc.).";
-  }
+  const cleanEmail = emailValidation.normalizedEmail; // Normalized email
 
   // Common weak passwords check
+  // Password strength checks
+  if (rawPassword.length < 8) return { isValid: false, error: "Password must be at least 8 characters long." };
+  if (rawPassword.length > 64) return { isValid: false, error: "Password must not exceed 64 characters." };
+  if (!/[a-z]/.test(rawPassword)) return { isValid: false, error: "Password must include at least one lowercase letter." };
+  if (!/[A-Z]/.test(rawPassword)) return { isValid: false, error: "Password must include at least one uppercase letter." };
+  if (!/\d/.test(rawPassword)) return { isValid: false, error: "Password must include at least one number." };
+  if (!/[!@#$%^&*()_+\-=\[\]{};:'"|,.<>?/~`]/.test(rawPassword)) return { isValid: false, error: "Password must include at least one special character (!@#$%^&* etc.)." };
+
+  // ✅ Common weak passwords check (Properly placed inside function)
   const commonPasswords = [
-    "password123",
-    "password1234",
-    "password12345",
-    "12345678",
-    "123456789",
-    "qwerty123",
-    "qwertyuiop",
-    "admin123",
-    "letmein123",
-    "welcome123",
-    "monkey123",
-    "1234567890",
-    "abcdefgh",
-    "abc12345",
-    "password1",
-    "passw0rd",
-    "p@ssw0rd",
-    "P@ssw0rd",
-    "Password123",
-    "Password123!",
-    "Admin@123",
-    "admin@123",
+    "password123", "password1234", "password12345", "12345678", "123456789",
+    "qwerty123", "qwertyuiop", "admin123", "letmein123", "welcome123",
+    "monkey123", "1234567890", "abcdefgh", "abc12345", "password1",
+    "passw0rd", "p@ssw0rd", "P@ssw0rd", "Password123", "Password123!",
+    "Admin@123", "admin@123"
   ];
   if (commonPasswords.includes(rawPassword.toLowerCase())) {
-    return "Password is too common or weak. Please choose a stronger password.";
+    return { isValid: false, error: "Password is too common or weak. Please choose a stronger password." };
   }
 
-  if (rawPassword !== rawConfirm) return "Passwords do not match.";
-  return null;
+  if (rawPassword !== rawConfirm) return { isValid: false, error: "Passwords do not match." };
+
+  // ✅ Return validated object
+  return { isValid: true, normalizedEmail: cleanEmail, error: null };
 }
 
 async function readJsonBody(req) {

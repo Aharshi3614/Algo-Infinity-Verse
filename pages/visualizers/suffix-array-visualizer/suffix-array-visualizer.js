@@ -10,11 +10,9 @@
     activeSuffixRow: -1,
     selectedRowIdx: -1,
 
-
     caseInsensitive: true,
     allowSpaces: true,
   };
-
 
   // ===== DOM =====
   const el = {
@@ -57,8 +55,17 @@
     adjacentComparison: document.getElementById('saAdjacentComparison'),
     drilldownReason: document.getElementById('saDrilldownReason'),
 
-  };
+    exportJsonBtn: document.getElementById('saExportJsonBtn'),
+    exportReportBtn: document.getElementById('saExportReportBtn'),
+    shareBtn: document.getElementById('saShareBtn'),
+    shareStatus: document.getElementById('saShareStatus'),
 
+    compareBtn: document.getElementById('saCompareBtn'),
+    compareIInput: document.getElementById('saCompareIInput'),
+    compareJInput: document.getElementById('saCompareJInput'),
+    compareWarning: document.getElementById('saCompareWarning'),
+    compareResult: document.getElementById('saCompareResult'),
+  };
 
   // ===== Helpers =====
   const safeStr = (x) => (typeof x === 'string' ? x : '');
@@ -124,9 +131,6 @@
     el.inputWarning.textContent = warnings.length ? warnings.join(' ') : '';
     el.inputWarning.style.display = warnings.length ? 'block' : 'none';
   }
-
-
-
 
   function getCharCodeMap(s) {
     // Compress initial ranks by character.
@@ -245,7 +249,7 @@
           nextRanks: ranks.slice(),
           keys: ordering.map((idx) => keys[idx]),
           updated: ordering.map(() => false),
-          explanation: buildComparePlaceExplanation(k, len, f, keys, s, ordering),
+          explanation: buildComparePlaceExplanation(k, len, f, keys, s),
           anim: f,
         });
       });
@@ -267,6 +271,7 @@
 
     let k = 0;
     let len = 1;
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       // key pair = (rank[i], rank[i+len])
       const keys = Array.from({ length: n }, (_, i) => {
@@ -305,7 +310,7 @@
           keys: ordering.map((idx) => keys[idx]),
           updated,
           anim: f,
-          explanation: buildComparePlaceExplanation(k, len, f, keys, s, ordering),
+          explanation: buildComparePlaceExplanation(k, len, f, keys, s),
         });
       });
 
@@ -319,8 +324,7 @@
         nextRanks: nextRanks.slice(),
         keys: ordering.map((idx) => keys[idx]),
         updated,
-        explanation:
-          `Finished stable sorting by key (rank[i], rank[i+${len}]); then reassigned ranks (compressed from sorted unique keys).`,
+        explanation: `Finished stable sorting by key (rank[i], rank[i+${len}]); then reassigned ranks (compressed from sorted unique keys).`,
       });
 
       ranks = nextRanks;
@@ -342,7 +346,7 @@
     return { steps, finalOrder: finalOrdering };
   }
 
-  function buildComparePlaceExplanation(k, len, frame, keys, s, ordering) {
+  function buildComparePlaceExplanation(k, len, frame, keys, s) {
     if (!frame || !frame.type) return '';
 
     if (frame.type === 'Compare') {
@@ -384,10 +388,283 @@
     return sub.slice(0, maxLen) + '…';
   }
 
+  function getRoundsSummary() {
+    const summary = [];
+    if (!state.steps || state.steps.length === 0) return summary;
+
+    // Find initialization snapshot
+    const initStep = state.steps.find((step) => step.phase === 'Initialization');
+    if (initStep) {
+      summary.push({
+        roundName: 'Initialization',
+        k: initStep.k,
+        len: initStep.len,
+        ordering: initStep.ordering.slice(),
+        ranks: initStep.ranks.slice(),
+      });
+    }
+
+    // Find all round end snapshots
+    const roundEndSteps = state.steps.filter(
+      (step) => step.phase.startsWith('Round (doubling)') && !step.anim
+    );
+    roundEndSteps.forEach((step, index) => {
+      summary.push({
+        roundName: `Round ${index + 1} (k=${step.k})`,
+        k: step.k,
+        len: step.len,
+        ordering: step.ordering.slice(),
+        ranks: step.nextRanks.slice(),
+      });
+    });
+
+    return summary;
+  }
+
+  function downloadJson() {
+    if (!state.s) return;
+    const summary = getRoundsSummary();
+    const exportData = {
+      inputString: state.s,
+      caseInsensitive: state.caseInsensitive,
+      allowSpaces: state.allowSpaces,
+      finalOrdering: state.finalOrder || [],
+      rounds: summary,
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `suffix_array_${state.s.replace(/[^a-zA-Z0-9]/g, '_')}_report.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function generateHtmlReport() {
+    if (!state.s) return;
+    const summary = getRoundsSummary();
+    const dateStr = new Date().toLocaleString();
+
+    let roundsHtml = '';
+    summary.forEach((round) => {
+      let rowsHtml = '';
+      round.ordering.forEach((suffixIndex, rowIdx) => {
+        const suffixSub = state.s.slice(suffixIndex);
+        const suffixSubDisplay = suffixSub.length > 20 ? suffixSub.slice(0, 20) + '…' : suffixSub;
+        const rank = round.ranks[suffixIndex] ?? 0;
+
+        let keyDisplay = '—';
+        if (round.k > 0 || round.roundName !== 'Initialization') {
+          const r1 = round.ranks[suffixIndex];
+          const r2Idx = suffixIndex + round.len;
+          const r2 = r2Idx < state.s.length ? round.ranks[r2Idx] : -1;
+          keyDisplay = `(${r1}, ${r2})`;
+        }
+
+        rowsHtml += `
+          <tr>
+            <td>${rowIdx}</td>
+            <td>${suffixIndex}</td>
+            <td class="suffix">${suffixSubDisplay}</td>
+            <td>${rank}</td>
+            <td class="fira">${keyDisplay}</td>
+          </tr>
+        `;
+      });
+
+      roundsHtml += `
+        <div class="card">
+          <h3>${round.roundName} (len = ${round.len})</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Suffix Index</th>
+                <th>Suffix Substring</th>
+                <th>Rank</th>
+                <th>Key Pair</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+        </div>
+      `;
+    });
+
+    const finalOrderStr = state.finalOrder ? state.finalOrder.join(', ') : '—';
+
+    const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Suffix Array Visualization Report - ${state.s}</title>
+  <style>
+    body {
+      font-family: 'Poppins', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #0a0a1a;
+      color: #e2e8f0;
+      line-height: 1.6;
+      padding: 2.5rem;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+    header {
+      border-bottom: 2px solid #7c3aed;
+      padding-bottom: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    h1 {
+      font-size: 2.5rem;
+      color: #06b6d4;
+      margin: 0 0 0.5rem 0;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .metadata {
+      font-size: 0.9rem;
+      color: #a0aec0;
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    .metadata span strong {
+      color: #fff;
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+    .card h3 {
+      margin-top: 0;
+      color: #a78bfa;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: 0.5rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+    th, td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    th {
+      color: #06b6d4;
+      font-weight: 600;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+    }
+    td {
+      font-size: 0.95rem;
+    }
+    .suffix {
+      font-family: 'Fira Code', monospace;
+      color: #e2e8f0;
+      font-weight: 500;
+    }
+    .fira {
+      font-family: 'Fira Code', monospace;
+    }
+    .final-badge {
+      display: inline-block;
+      background: linear-gradient(135deg, #7c3aed 0%, #06b6d4 100%);
+      color: white;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      font-family: 'Fira Code', monospace;
+      font-size: 1.1rem;
+      font-weight: bold;
+      margin-top: 0.5rem;
+      box-shadow: 0 4px 15px rgba(6, 182, 212, 0.25);
+    }
+    footer {
+      text-align: center;
+      margin-top: 4rem;
+      font-size: 0.8rem;
+      color: #718096;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-top: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Suffix Array Report</h1>
+    <div class="metadata">
+      <span>String: <strong>"${state.s}"</strong></span>
+      <span>Length: <strong>${state.s.length}</strong></span>
+      <span>Case-Insensitive: <strong>${state.caseInsensitive}</strong></span>
+      <span>Allow Spaces: <strong>${state.allowSpaces}</strong></span>
+      <span>Generated: <strong>${dateStr}</strong></span>
+    </div>
+  </header>
+
+  <div class="card">
+    <h3>Final Suffix Array</h3>
+    <div class="final-badge">${finalOrderStr}</div>
+  </div>
+
+  <h2>Construction Rounds Summary</h2>
+  ${roundsHtml}
+
+  <footer>
+    Generated by Algo Infinity Verse Suffix Array Visualizer
+  </footer>
+</body>
+</html>`;
+
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `suffix_array_${state.s.replace(/[^a-zA-Z0-9]/g, '_')}_report.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function getShareLink() {
+    const sVal = el.textInput ? el.textInput.value : state.s;
+    const ciVal = el.caseInsensitiveToggle
+      ? el.caseInsensitiveToggle.checked
+      : state.caseInsensitive;
+    const asVal = el.allowSpacesToggle ? el.allowSpacesToggle.checked : state.allowSpaces;
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('s', sVal);
+    url.searchParams.set('ci', String(ciVal));
+    url.searchParams.set('as', String(asVal));
+    return url.toString();
+  }
+
+  function copyShareLink() {
+    const link = getShareLink();
+    navigator.clipboard.writeText(link).then(() => {
+      if (el.shareStatus) {
+        el.shareStatus.classList.remove('hidden');
+        setTimeout(() => {
+          el.shareStatus.classList.add('hidden');
+        }, 2000);
+      }
+    });
+  }
+
   function setButtons() {
     clearCompareHighlights();
-
-    const total = state.steps.length;
 
     const total = state.steps.length;
     const atStart = state.idx <= 0;
@@ -426,7 +703,6 @@
 
     // Adjacent suffix reasoning: compare against previous row in sorted order.
 
-
     const prevRowIdx = state.selectedRowIdx - 1;
 
     let adjacentText = '—';
@@ -459,7 +735,6 @@
           cmp = (thisKey[1] ?? -1) - (prevKey[1] ?? -1);
         }
 
-
         const rel = cmp > 0 ? 'greater than' : 'less than';
         const diffPart = !same0 ? 'first half rank' : 'second half rank';
         adjacentText = `Compared to previous suffix (row ${prevRowIdx}): key is ${rel} the adjacent key.`;
@@ -474,10 +749,10 @@
         // keep reasonText concise but informative
         // (No-op for now; panel already has main explanation.)
       }
-
     } else {
       el.adjacentComparison.textContent = 'No previous adjacent suffix in this sorted order.';
-      el.drilldownReason.textContent = 'This suffix is the first row of the current sorted ordering.';
+      el.drilldownReason.textContent =
+        'This suffix is the first row of the current sorted ordering.';
     }
 
     el.selectedSuffixIndex.textContent = String(suffixIndex);
@@ -487,7 +762,7 @@
     // Keep len/k mention implicit in the combined key.
   }
 
-  function getRoundKey
+  function getRoundKey(step, idx, len) {
     if (!step || !step.ranks) return [null, null];
     const r1 = step.ranks[idx];
     const r2Idx = idx + len;
@@ -578,7 +853,7 @@
         <div><b>key(j)</b> = (${keyJ[0] ?? '-'}, ${keyJ[1] ?? '-'}) for suffix ${j} ("${previewJ}")</div>
         <div><b>Comparison</b>: key(i) is <b>${relation}</b> key(j). ${chosenEarlier}</div>
       `;
-+    }
+    }
 
     // Highlight rows in the table simultaneously.
     setCompareRowHighlight(step, i, j);
@@ -603,13 +878,11 @@
     }
 
     const step = state.steps[state.idx];
-    const n = state.s.length;
 
     // If nothing is selected yet, default to the first sorted row.
     if (state.selectedRowIdx < 0 && step && step.ordering && step.ordering.length > 0) {
       state.selectedRowIdx = 0;
     }
-
 
     el.stepIndicator.textContent = `Round: ${state.idx} / ${total - 1}`;
     el.phaseLabel.textContent = step.phase;
@@ -639,11 +912,14 @@
       if (isUpdated) tr.classList.add('sa-updated-row');
 
       const suffixText = substringForSuffix(state.s, suffixIndex);
-      const rankVal = (step.nextRanks && step.nextRanks[suffixIndex] != null)
-        ? step.nextRanks[suffixIndex]
-        : (step.ranks ? step.ranks[suffixIndex] : 0);
+      const rankVal =
+        step.nextRanks && step.nextRanks[suffixIndex] != null
+          ? step.nextRanks[suffixIndex]
+          : step.ranks
+            ? step.ranks[suffixIndex]
+            : 0;
 
-      const keyPair = (step.keys && step.keys[rowIdx]) ? step.keys[rowIdx] : [null, null];
+      const keyPair = step.keys && step.keys[rowIdx] ? step.keys[rowIdx] : [null, null];
 
       // next rank reference: show the second component's rank reference
       const nextRankRef = keyPair && keyPair.length === 2 ? keyPair[1] : -1;
@@ -687,11 +963,9 @@
     }
     updateDrillDownPanel();
 
-
     const isFinalRound = state.idx === total - 1;
-    el.finalOrder.textContent = isFinalRound && state.finalOrder
-      ? state.finalOrder.join(', ')
-      : '—';
+    el.finalOrder.textContent =
+      isFinalRound && state.finalOrder ? state.finalOrder.join(', ') : '—';
 
     setButtons();
   }
@@ -787,9 +1061,24 @@
     renderRound();
   }
 
-
   // ===== Init =====
   function init() {
+    // Parse URL query parameters for sharing
+    const params = new URLSearchParams(window.location.search);
+    const paramS = params.get('s');
+    const paramCI = params.get('ci');
+    const paramAS = params.get('as');
+
+    if (paramS !== null && el.textInput) {
+      el.textInput.value = paramS;
+    }
+    if (paramCI !== null && el.caseInsensitiveToggle) {
+      el.caseInsensitiveToggle.checked = paramCI === 'true';
+    }
+    if (paramAS !== null && el.allowSpacesToggle) {
+      el.allowSpacesToggle.checked = paramAS === 'true';
+    }
+
     // Set complexity text from spec/education
     if (el.timeComplexity) el.timeComplexity.textContent = 'O(n log² n)';
     if (el.spaceComplexity) el.spaceComplexity.textContent = 'O(n)';
@@ -824,6 +1113,22 @@
     if (el.stepForwardBtn) el.stepForwardBtn.addEventListener('click', () => stepForward());
     if (el.stepBackBtn) el.stepBackBtn.addEventListener('click', () => stepBack());
     if (el.resetBtn) el.resetBtn.addEventListener('click', () => generateAndReset());
+
+    if (el.exportJsonBtn) el.exportJsonBtn.addEventListener('click', () => downloadJson());
+    if (el.exportReportBtn)
+      el.exportReportBtn.addEventListener('click', () => generateHtmlReport());
+    if (el.shareBtn) el.shareBtn.addEventListener('click', () => copyShareLink());
+
+    if (el.compareBtn) {
+      el.compareBtn.addEventListener('click', () => {
+        if (el.compareIInput && el.compareJInput) {
+          const i = parseInt(el.compareIInput.value, 10);
+          const j = parseInt(el.compareJInput.value, 10);
+          const step = state.steps[state.idx];
+          computeAndDisplayComparison(step, i, j);
+        }
+      });
+    }
 
     // Toggles
     const applyTogglesFromUI = () => {
@@ -866,9 +1171,7 @@
 
     // Initial render
     generateAndReset();
-
   }
 
   document.addEventListener('DOMContentLoaded', init);
 })();
-
