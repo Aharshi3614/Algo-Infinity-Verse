@@ -205,7 +205,11 @@ function getRefreshToken(req) {
 // Previously this set only the access cookie, so the aiv_refresh cookie was
 // never issued and silent token refresh could never succeed (#1225).
 function authCookies(accessToken, refreshToken, req) {
-  const secure = req.headers['x-forwarded-proto'] === 'https';
+  // Don't rely solely on x-forwarded-proto: some deploy targets' proxies
+  // don't forward it, which would leave session cookies without Secure over
+  // HTTPS. Always require it in production regardless of that header (#2358).
+  const secure =
+    process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
   const cookie = (name, value, maxAge) =>
     [
       `${name}=${encodeURIComponent(value)}`,
