@@ -9,7 +9,31 @@
       "destination": "/pages/auth/login.html"
     },
     {
+      "source": "/login.html",
+      "destination": "/pages/auth/login.html"
+    },
+    {
+      "source": "/login.html?*",
+      "destination": "/pages/auth/login.html"
+    },
+    {
+      "source": "/login.html/:query*",
+      "destination": "/pages/auth/login.html"
+    },
+    {
+      "source": "/signup.html?*",
+      "destination": "/pages/auth/login.html"
+    },
+    {
+      "source": "/signup.html/:query*",
+      "destination": "/pages/auth/login.html"
+    },
+    {
       "source": "/signup",
+      "destination": "/pages/auth/signup.html"
+    },
+    {
+      "source": "/signup.html",
       "destination": "/pages/auth/signup.html"
     },
     {
