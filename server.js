@@ -9,8 +9,6 @@ import apiRouter from './backend/routes/api.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
-import { FieldValue } from 'firebase-admin/firestore';
-import { initializeFirebase, COLLECTIONS } from './firebase.js';
 import { verifyCsrfToken } from './utils/csrf-verify.js';
 import { validateEnv } from './utils/envValidator.js';
 import multer from 'multer';
@@ -68,16 +66,7 @@ import {
 } from './backend/utils/rateLimiter.js';
 import { applySM2 } from './backend/services/memory.service.js';
 import { sendVerificationEmail } from './backend/services/email.service.js';
-import {
-  createBattle,
-  joinBattle,
-  startBattle,
-  submitSolution,
-  getBattle,
-  getHistory,
-  TEST_CASES,
-  runDetailedTestCases,
-} from './pages/Dsa-Battle/Battleservice.js';
+import { TEST_CASES, runDetailedTestCases } from './pages/Dsa-Battle/Battleservice.js';
 
 // import { instrumentJS } from './modules/code-tracer.js';
 
@@ -128,6 +117,8 @@ const EXECUTIONS_FILE = path.join(DATA_DIR, 'executions.json');
 const CLIENT_ERRORS_FILE = path.join(DATA_DIR, 'client_errors.json');
 const FEEDBACK_FILE = path.join(DATA_DIR, 'feedback.json');
 const INTERVIEW_EXPERIENCES_FILE = path.join(DATA_DIR, 'interview-experiences.json');
+const QUIZ_RESULTS_FILE = path.join(DATA_DIR, 'quiz_results.json');
+const STUDY_ROOM_RESULTS_FILE = path.join(DATA_DIR, 'study_room_results.json');
 
 // Caps for append-only JSON logs so they can never grow unbounded on disk.
 const MAX_CLIENT_ERROR_ENTRIES = 1000;
@@ -218,9 +209,8 @@ function authCookies(accessToken, refreshToken, req) {
   // HTTPS. Always require it in production regardless of that header (#2358).
   const secure =
     process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
-  // Use SameSite=None for refresh/access cookies to ensure the cookie is
-  // included after OAuth redirects (Supabase/Google) on Vercel.
-  // This avoids 401s from /api/refresh due to missing aiv_refresh cookie.
+  // Use SameSite=None so the refresh cookie is sent on cross-site fetches
+  // (e.g. preview deployments) while remaining HttpOnly.
   const cookie = (name, value, maxAge) =>
     [
       `${name}=${encodeURIComponent(value)}`,
@@ -247,40 +237,24 @@ function clearAuthCookies() {
   ];
 }
 
-let db = null;
-let useFirestore = false;
-
 async function getUserByEmail(email) {
-  if (!useFirestore) {
-    const users = await readUsers();
-    return users.find((u) => u.email === email) || null;
-  }
-  const snapshot = await db
-    .collection(COLLECTIONS.USERS)
-    .where('email', '==', email)
-    .limit(1)
-    .get();
-  if (snapshot.empty) return null;
-  return { ...snapshot.docs[0].data(), id: snapshot.docs[0].id };
+  const users = await readUsers();
+  return users.find((u) => u.email === email) || null;
 }
 
 let userWriteQueue = Promise.resolve();
 
 async function createUser(userData) {
-  if (!useFirestore) {
-    const task = userWriteQueue.then(async () => {
-      const users = await readUsers();
-      users.push(userData);
-      await writeUsers(users);
-      return userData;
-    });
-    userWriteQueue = task.catch((err) => {
-      console.error('[createUser] Write task failed:', err);
-    });
-    return task;
-  }
-  const docRef = await db.collection(COLLECTIONS.USERS).add(userData);
-  return { ...userData, id: docRef.id };
+  const task = userWriteQueue.then(async () => {
+    const users = await readUsers();
+    users.push(userData);
+    await writeUsers(users);
+    return userData;
+  });
+  userWriteQueue = task.catch((err) => {
+    console.error('[createUser] Write task failed:', err);
+  });
+  return task;
 }
 
 async function ensureUserStore() {
@@ -346,6 +320,22 @@ async function readAudits() {
   return JSON.parse(raw || '[]');
 }
 
+// Generic capped JSON-array reader for per-feature append stores.
+async function readJsonArray(filePath) {
+  try {
+    await fs.access(filePath);
+  } catch {
+    return [];
+  }
+  try {
+    const raw = await fs.readFile(filePath, 'utf8');
+    const parsed = JSON.parse(raw || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 // ── Execution History Store ─────────────────────────────────────────────────
 
 let executionWriteQueue = Promise.resolve();
@@ -390,11 +380,8 @@ async function updateExecutionStore(mutator) {
 }
 
 // ── Memory Scanner (Spaced Repetition, SM-2) ─────────────────────────────────
-// NOTE: This currently uses local JSON file storage, matching the existing
-// users.json/feedback.json pattern in this codebase. In multi-instance or
-// serverless (VERCEL=1 / Firestore) deployments this is not a shared source
-// of truth. Migrating to Firestore (mirroring getUserByEmail/createUser's
-// useFirestore branching) is tracked as a follow-up.
+// Uses local JSON file storage, matching the users.json/feedback.json pattern.
+// This is the canonical store for the pure-JWT build (no Firebase/Firestore).
 let memoryWriteQueue = Promise.resolve();
 
 async function ensureMemoryStore() {
@@ -564,8 +551,6 @@ async function readJsonBody(req) {
 }
 
 function sendJson(res, status, body, headers = {}) {
-  // Note: COOP header omitted so the browser can read popup/redirect state for
-  // cross-origin OAuth flows (Supabase Google sign-in).
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     ...headers,
@@ -577,6 +562,10 @@ function redirect(res, location, headers = {}) {
   res.writeHead(302, { Location: location, ...headers });
   res.end();
 }
+
+// Sessions are carried in the aiv_session / aiv_refresh HttpOnly cookies and
+// verified as pure HMAC-signed JWTs (see backend/services/auth.service.js).
+// No third-party auth provider is involved.
 
 function getSession(req) {
   const cookies = parseCookies(req.headers.cookie || '');
@@ -693,18 +682,8 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, 400, { error: 'Missing team id.' });
       }
 
-      let profileData = null;
-
-      if (!useFirestore) {
-        const store = await readTeamProfilesStore();
-        profileData = store[teamId] || null;
-      } else {
-        const docRef = db.collection(COLLECTIONS.TEAM_PROFILES).doc(teamId);
-        const snapshot = await docRef.get();
-        if (snapshot.exists) {
-          profileData = snapshot.data();
-        }
-      }
+      const store = await readTeamProfilesStore();
+      const profileData = store[teamId] || null;
 
       if (profileData && !canAccessTeamProfile(profileData, session.sub)) {
         return sendJson(res, 403, { error: 'You do not have access to this team profile.' });
@@ -748,103 +727,51 @@ async function handleApi(req, res, pathname) {
 
       let updatedProfile = null;
 
-      if (!useFirestore) {
-        try {
-          updatedProfile = await updateTeamProfilesStore((store) => {
-            const existing = store[teamId] || null;
-            const currentProfile = existing || { version: 1 };
+      try {
+        updatedProfile = await updateTeamProfilesStore((store) => {
+          const existing = store[teamId] || null;
+          const currentProfile = existing || { version: 1 };
 
-            // Ownership check: only the owner/members may modify a claimed profile.
-            if (!canAccessTeamProfile(existing, session.sub)) {
-              const forbiddenError = new Error('Forbidden');
-              forbiddenError.status = 403;
-              throw forbiddenError;
-            }
-
-            // OCC version check
-            if (currentProfile.version !== version) {
-              const conflictError = new Error('Conflict');
-              conflictError.status = 409;
-              conflictError.currentVersion = currentProfile.version;
-              throw conflictError;
-            }
-
-            // Update data and increment version
-            const newProfile = {
-              id: teamId,
-              ownerId: currentProfile.ownerId || session.sub,
-              name: name || currentProfile.name || 'New Team Profile',
-              description:
-                description !== undefined ? description : currentProfile.description || '',
-              members: members || currentProfile.members || [],
-              version: version + 1,
-              updatedAt: new Date().toISOString(),
-            };
-
-            store[teamId] = newProfile;
-            return newProfile;
-          });
-        } catch (error) {
-          if (error.status === 403) {
-            return sendJson(res, 403, { error: 'You do not have access to this team profile.' });
+          // Ownership check: only the owner/members may modify a claimed profile.
+          if (!canAccessTeamProfile(existing, session.sub)) {
+            const forbiddenError = new Error('Forbidden');
+            forbiddenError.status = 403;
+            throw forbiddenError;
           }
-          if (error.status === 409) {
-            return sendJson(res, 409, {
-              error: 'Conflict detected: The profile was updated by someone else.',
-              currentVersion: error.currentVersion,
-            });
+
+          // OCC version check
+          if (currentProfile.version !== version) {
+            const conflictError = new Error('Conflict');
+            conflictError.status = 409;
+            conflictError.currentVersion = currentProfile.version;
+            throw conflictError;
           }
-          throw error;
+
+          // Update data and increment version
+          const newProfile = {
+            id: teamId,
+            ownerId: currentProfile.ownerId || session.sub,
+            name: name || currentProfile.name || 'New Team Profile',
+            description: description !== undefined ? description : currentProfile.description || '',
+            members: members || currentProfile.members || [],
+            version: version + 1,
+            updatedAt: new Date().toISOString(),
+          };
+
+          store[teamId] = newProfile;
+          return newProfile;
+        });
+      } catch (error) {
+        if (error.status === 403) {
+          return sendJson(res, 403, { error: 'You do not have access to this team profile.' });
         }
-      } else {
-        const docRef = db.collection(COLLECTIONS.TEAM_PROFILES).doc(teamId);
-        try {
-          updatedProfile = await db.runTransaction(async (transaction) => {
-            const doc = await transaction.get(docRef);
-            const existing = doc.exists ? doc.data() : null;
-
-            // Ownership check: only the owner/members may modify a claimed profile.
-            if (!canAccessTeamProfile(existing, session.sub)) {
-              const forbiddenError = new Error('Forbidden');
-              forbiddenError.status = 403;
-              throw forbiddenError;
-            }
-
-            const currentVersion = existing ? existing.version : 1;
-
-            if (currentVersion !== version) {
-              const conflictError = new Error('Conflict');
-              conflictError.status = 409;
-              conflictError.currentVersion = currentVersion;
-              throw conflictError;
-            }
-
-            const newProfile = {
-              id: teamId,
-              ownerId: (existing && existing.ownerId) || session.sub,
-              name: name || (existing ? existing.name : 'New Team Profile'),
-              description:
-                description !== undefined ? description : existing ? existing.description : '',
-              members: members || (existing ? existing.members : []),
-              version: version + 1,
-              updatedAt: new Date().toISOString(),
-            };
-
-            transaction.set(docRef, newProfile);
-            return newProfile;
+        if (error.status === 409) {
+          return sendJson(res, 409, {
+            error: 'Conflict detected: The profile was updated by someone else.',
+            currentVersion: error.currentVersion,
           });
-        } catch (error) {
-          if (error.status === 403) {
-            return sendJson(res, 403, { error: 'You do not have access to this team profile.' });
-          }
-          if (error.status === 409) {
-            return sendJson(res, 409, {
-              error: 'Conflict detected: The profile was updated by someone else.',
-              currentVersion: error.currentVersion,
-            });
-          }
-          throw error;
         }
+        throw error;
       }
 
       return sendJson(res, 200, updatedProfile);
@@ -859,17 +786,7 @@ async function handleApi(req, res, pathname) {
     req.method === 'GET' &&
     process.env.ENABLE_DEBUG_ENV === 'true'
   ) {
-    const keys = [
-      'FIREBASE_API_KEY',
-      'FIREBASE_AUTH_DOMAIN',
-      'FIREBASE_PROJECT_ID',
-      'FIREBASE_STORAGE_BUCKET',
-      'FIREBASE_MESSAGING_SENDER_ID',
-      'FIREBASE_APP_ID',
-      'FIREBASE_CLIENT_EMAIL',
-      'FIREBASE_PRIVATE_KEY',
-      'SESSION_SECRET',
-    ];
+    const keys = ['SESSION_SECRET', 'EMAIL_USER', 'ENABLE_DEBUG_ENV'];
     const vars = {};
     keys.forEach((k) => {
       const v = process.env[k];
@@ -878,41 +795,13 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, vars);
   }
   if (pathname === '/api/firebase-config' && req.method === 'GET') {
-    const apiKey = process.env.FIREBASE_API_KEY;
-    const authDomain = process.env.FIREBASE_AUTH_DOMAIN;
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
-    const messagingSenderId = process.env.FIREBASE_MESSAGING_SENDER_ID;
-    const appId = process.env.FIREBASE_APP_ID;
-
-    if (!apiKey || !authDomain || !projectId || !storageBucket || !messagingSenderId || !appId) {
-      return sendJson(res, 503, { configured: false, error: 'Firebase not configured' });
-    }
-
-    return sendJson(res, 200, {
-      configured: true,
-      apiKey,
-      authDomain,
-      projectId,
-      storageBucket,
-      messagingSenderId,
-      appId,
-    });
+    // Firebase auth/storage was removed in favour of pure JWT sessions.
+    return sendJson(res, 503, { configured: false, error: 'Firebase is not used.' });
   }
 
   if (pathname === '/api/supabase-config' && req.method === 'GET') {
-    const url = process.env.SUPABASE_URL;
-    const anonKey = process.env.SUPABASE_ANON_KEY;
-
-    if (!url || !anonKey) {
-      return sendJson(res, 200, { configured: false });
-    }
-
-    return sendJson(res, 200, {
-      configured: true,
-      url,
-      anonKey,
-    });
+    // Supabase auth was removed in favour of pure JWT sessions.
+    return sendJson(res, 200, { configured: false });
   }
 
   if (pathname === '/api/csrf-token' && req.method === 'GET') {
@@ -1174,21 +1063,8 @@ async function handleApi(req, res, pathname) {
     await revokeTokenFamily(decoded.familyId);
 
     // Find user
-    const users = useFirestore ? [] : await readUsers();
-    let user;
-    if (useFirestore) {
-      user = await getUserByEmail(decoded.email);
-      if (!user) {
-        try {
-          const snapshot = await db.collection('users').doc(decoded.sub).get();
-          if (snapshot.exists) user = { ...snapshot.data(), id: snapshot.id };
-        } catch (e) {
-          // ignore
-        }
-      }
-    } else {
-      user = users.find((u) => u.id === decoded.sub);
-    }
+    const users = await readUsers();
+    const user = users.find((u) => u.id === decoded.sub);
 
     if (!user)
       return sendJson(res, 401, { error: 'User not found' }, { 'Set-Cookie': clearAuthCookies() });
@@ -1337,18 +1213,11 @@ async function handleApi(req, res, pathname) {
       if (user.isDeactivated) {
         user.isDeactivated = false;
         user.deactivatedAt = null;
-        if (useFirestore) {
-          await db.collection(COLLECTIONS.USERS).doc(user.id).update({
-            isDeactivated: false,
-            deactivatedAt: null,
-          });
-        } else {
-          const users = await readUsers();
-          const index = users.findIndex((u) => u.id === user.id);
-          if (index !== -1) {
-            users[index] = user;
-            await writeUsers(users);
-          }
+        const users = await readUsers();
+        const index = users.findIndex((u) => u.id === user.id);
+        if (index !== -1) {
+          users[index] = user;
+          await writeUsers(users);
         }
       }
 
@@ -1364,239 +1233,6 @@ async function handleApi(req, res, pathname) {
     } catch (error) {
       console.error('[login] Unexpected error:', error);
       return sendJson(res, 500, { error: 'Login failed due to a server error.' });
-    }
-  }
-
-  // ── Supabase JWT verification (HS256, signed with SUPABASE_JWT_SECRET) ─────
-  function base64UrlDecode(str) {
-    const normalized = str.replace(/-/g, '+').replace(/_/g, '/');
-    return Buffer.from(normalized, 'base64');
-  }
-
-  function verifySupabaseJwt(token) {
-    const jwtSecret = process.env.SUPABASE_JWT_SECRET;
-    if (!jwtSecret) {
-      throw new Error('Supabase JWT secret not configured');
-    }
-
-    const parts = String(token).split('.');
-    if (parts.length !== 3) {
-      throw new Error('Malformed JWT');
-    }
-    const [headerB64, payloadB64, signatureB64] = parts;
-
-    let header;
-    try {
-      header = JSON.parse(base64UrlDecode(headerB64).toString('utf8'));
-    } catch {
-      throw new Error('Invalid JWT header');
-    }
-
-    if (header.alg !== 'HS256') {
-      throw new Error('Unexpected JWT algorithm');
-    }
-
-    const expected = crypto
-      .createHmac('sha256', jwtSecret)
-      .update(`${headerB64}.${payloadB64}`)
-      .digest();
-    const provided = base64UrlDecode(signatureB64);
-
-    if (expected.length !== provided.length || !crypto.timingSafeEqual(expected, provided)) {
-      throw new Error('Invalid JWT signature');
-    }
-
-    let payload;
-    try {
-      payload = JSON.parse(base64UrlDecode(payloadB64).toString('utf8'));
-    } catch {
-      throw new Error('Invalid JWT payload');
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    if (typeof payload.exp === 'number' && payload.exp < now) {
-      throw new Error('JWT expired');
-    }
-
-    const supabaseUrl = process.env.SUPABASE_URL;
-    if (supabaseUrl) {
-      const base = supabaseUrl.replace(/\/+$/, '');
-      if (payload.iss && !String(payload.iss).startsWith(base)) {
-        throw new Error('Invalid JWT issuer');
-      }
-      if (payload.aud !== 'authenticated') {
-        throw new Error('Invalid JWT audience');
-      }
-    }
-
-    return payload;
-  }
-
-  // Upsert a user into Supabase Postgres via the PostgREST API (no extra
-  // dependency). Uses the service-role key so it can write regardless of RLS.
-  // This is the storage path used on serverless/Vercel, where the local
-  // filesystem is read-only and Firestore may be unconfigured.
-  async function upsertSupabaseUser(record, serviceKey, supabaseUrl) {
-    const base = (supabaseUrl || '').replace(/\/+$/, '');
-    const res = await fetch(`${base}/rest/v1/users?on_conflict=email`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: serviceKey,
-        Authorization: `Bearer ${serviceKey}`,
-        Prefer: 'resolution=merge-upsert',
-      },
-      body: JSON.stringify([
-        {
-          id: record.id,
-          email: record.email,
-          name: record.name,
-          avatar: record.avatar,
-          supabase_id: record.supabaseId,
-          auth_provider: record.authProvider,
-          last_login: record.lastLogin,
-          updated_at: new Date().toISOString(),
-        },
-      ]),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`status ${res.status}: ${text}`);
-    }
-    return res.json();
-  }
-
-  if (pathname === '/api/auth/supabase' && req.method === 'POST') {
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_JWT_SECRET) {
-      return sendJson(res, 500, {
-        error:
-          'Supabase is not configured for authentication. Set SUPABASE_URL and SUPABASE_JWT_SECRET environment variables.',
-      });
-    }
-
-    try {
-      const body = await readJsonBody(req);
-      const { accessToken } = body;
-      if (!accessToken) {
-        return sendJson(res, 400, { error: 'Missing accessToken' });
-      }
-
-      let claims;
-      try {
-        // Cryptographically verify the Supabase access token (HS256) using the
-        // Supabase JWT secret. This validates the signature and the aud/iss/exp
-        // claims — far stronger than trusting an opaque token.
-        claims = verifySupabaseJwt(accessToken);
-      } catch (verifyError) {
-        console.error('Supabase token verification failed:', verifyError.message);
-        return sendJson(res, 401, { error: 'Invalid token' });
-      }
-
-      const sub = claims.sub;
-      const email = claims.email;
-      if (!sub || !email) {
-        return sendJson(res, 400, { error: 'Supabase token has no user identity.' });
-      }
-
-      // Enforce a Supabase-verified email. Only an email the provider has
-      // verified is trusted, which makes the email-based account matching
-      // below safe from takeover.
-      if (!claims.email_verified) {
-        return sendJson(res, 403, { error: 'Supabase account email is not verified.' });
-      }
-
-      const meta = claims.user_metadata || {};
-      const cleanEmail = email.toLowerCase().trim();
-      const displayName = meta.full_name || meta.name || cleanEmail.split('@')[0] || 'Learner';
-      const picture = meta.avatar_url || meta.picture || null;
-
-      // Build the user record from the verified Supabase claims. Persistence is
-      // best-effort only: on serverless (Vercel) the filesystem is read-only and
-      // Firestore may be unconfigured, but the session JWT below already encodes
-      // the identity, so login must still succeed.
-      const existing = await getUserByEmail(cleanEmail).catch(() => null);
-      const userRecord = existing
-        ? {
-            ...existing,
-            name: displayName,
-            avatar: picture || existing.avatar,
-            lastLogin: new Date().toISOString(),
-            supabaseId: existing.supabaseId || sub,
-            authProvider: existing.authProvider || 'google',
-          }
-        : {
-            id: sub,
-            name: displayName,
-            email: cleanEmail,
-            avatar: picture || null,
-            supabaseId: sub,
-            authProvider: 'google',
-            createdAt: new Date().toISOString(),
-            lastLogin: new Date().toISOString(),
-          };
-
-      // Persist the user. Prefer Supabase Postgres (writable from serverless /
-      // Vercel) when configured; otherwise best-effort Firestore / JSON store.
-      // Login still succeeds via the session JWT regardless of persistence.
-      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-      const supabaseUrl = process.env.SUPABASE_URL;
-      if (supabaseKey && supabaseUrl) {
-        try {
-          await upsertSupabaseUser(userRecord, supabaseKey, supabaseUrl);
-        } catch (persistError) {
-          console.error('Supabase user persistence failed:', persistError.message);
-        }
-      } else {
-        try {
-          if (existing) {
-            if (useFirestore) {
-              await db
-                .collection(COLLECTIONS.USERS)
-                .doc(existing.id)
-                .update({
-                  name: displayName,
-                  avatar: picture || null,
-                  lastLogin: new Date().toISOString(),
-                  supabaseId: sub,
-                  authProvider: 'google',
-                });
-            } else {
-              const users = await readUsers();
-              const index = users.findIndex((u) => u.id === existing.id);
-              if (index !== -1) {
-                users[index] = userRecord;
-                await writeUsers(users);
-              }
-            }
-          } else {
-            await createUser(userRecord);
-          }
-        } catch (persistError) {
-          console.error('User persistence skipped:', persistError.message);
-        }
-      }
-
-      const user = userRecord;
-
-      const token = createAccessToken(user);
-      const refreshToken = await createRefreshToken(user);
-      const cookie = authCookies(token, refreshToken, req);
-
-      return sendJson(
-        res,
-        200,
-        {
-          authenticated: true,
-          user: { id: user.id, name: user.name, email: user.email, avatar: user.avatar },
-        },
-        { 'Set-Cookie': cookie }
-      );
-    } catch (error) {
-      console.error('Supabase auth error:', error && error.stack ? error.stack : error);
-      return sendJson(res, 500, {
-        error: 'Internal server error',
-        detail: error?.message || String(error),
-      });
     }
   }
 
@@ -1818,27 +1454,9 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 400, { error: 'Valid email required.' });
     }
 
-    try {
-      const supabaseUrl = process.env.SUPABASE_URL;
-      const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
-
-      if (supabaseUrl && supabaseAnonKey) {
-        // Delegate password reset to Supabase (GoTrue). It returns 200
-        // regardless of whether the account exists, preventing enumeration.
-        await fetch(`${supabaseUrl.replace(/\/+$/, '')}/auth/v1/recover`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: supabaseAnonKey,
-            Authorization: `Bearer ${supabaseAnonKey}`,
-          },
-          body: JSON.stringify({ email }),
-        });
-      }
-    } catch (err) {
-      // Silently fail — don't expose whether email exists
-      void 0;
-    }
+    // Note: Supabase-based password reset has been removed. We intentionally
+    // return success regardless of whether the account exists so we never leak
+    // account existence via enumeration. Wire a real reset email here if needed.
 
     // Always return success to prevent email enumeration
     return sendJson(res, 200, { message: 'Reset email sent if account exists.' });
@@ -1898,13 +1516,8 @@ async function handleApi(req, res, pathname) {
     };
 
     try {
-      if (useFirestore) {
-        const docRef = await db.collection('feedback').add(feedbackData);
-        feedbackData.id = docRef.id;
-      } else {
-        feedbackData.id = crypto.randomUUID();
-        await appendToJsonArrayFile(FEEDBACK_FILE, feedbackData, MAX_FEEDBACK_ENTRIES);
-      }
+      feedbackData.id = crypto.randomUUID();
+      await appendToJsonArrayFile(FEEDBACK_FILE, feedbackData, MAX_FEEDBACK_ENTRIES);
 
       return sendJson(res, 201, { success: true, feedback: feedbackData });
     } catch (err) {
@@ -1916,35 +1529,49 @@ async function handleApi(req, res, pathname) {
   if (pathname === '/api/user/profile' && req.method === 'GET') {
     const session = getSession(req);
 
+    // Read the authenticated user's persisted record so the profile reflects
+    // real progress saved via /api/progress, /api/study-rooms results, etc.
+    let persisted = null;
+    if (session) {
+      const users = await readUsers();
+      persisted = users.find((u) => u.id === session.sub);
+    }
+
+    const name = persisted?.name || session?.name || 'Learner';
+    const email = persisted?.email || session?.email || '';
+    const avatar = persisted?.avatar || {
+      initial: (name || 'L').charAt(0).toUpperCase(),
+      bg: '#7c3aed',
+    };
+    const activityData = persisted?.activityData || {};
+
     const userData = {
       user: {
-        name: session?.name || 'John Doe',
-        username: session?.email?.split('@')[0] || 'johndoe',
-        avatar: { initial: 'L', bg: '#7c3aed' },
-        bio: 'Passionate about DSA and building cool stuff!',
-        joinedDate: '2024-01-15',
+        name,
+        username: email.split('@')[0] || 'learner',
+        avatar,
+        bio: persisted?.bio || 'Passionate about DSA and building cool stuff!',
+        joinedDate:
+          persisted?.createdAt || persisted?.joinedDate || new Date().toISOString().slice(0, 10),
       },
       stats: {
-        totalSolved: 45,
-        xp: 2800,
-        streak: 7,
-        level: 4,
+        totalSolved: activityData.totalSolved || 0,
+        xp: persisted?.xp || 0,
+        streak: persisted?.streak || 0,
+        level: persisted?.level || 1,
       },
-      badges: ['🌟 First Steps', '🔥 On Fire', '💎 Diamond'],
-      languages: [
+      badges: persisted?.badges || ['🌟 First Steps'],
+      languages: persisted?.languages || [
         { name: 'JavaScript', percentage: 80 },
         { name: 'Python', percentage: 65 },
-        { name: 'Java', percentage: 50 },
         { name: 'C++', percentage: 40 },
       ],
-      projects: [
+      projects: persisted?.projects || [
         { name: 'Weather App', description: 'Real-time weather app', link: '#' },
         { name: 'Task Manager', description: 'Manage tasks easily', link: '#' },
       ],
-      recentActivity: [
-        { action: 'Solved Two Sum', date: '2026-06-26' },
-        { action: 'Completed Arrays Quiz', date: '2026-06-25' },
-        { action: 'Earned Diamond Badge', date: '2026-06-24' },
+      recentActivity: activityData.recentActivity || [
+        { action: 'Joined Algo Infinity Verse', date: new Date().toISOString().slice(0, 10) },
       ],
     };
 
@@ -1986,16 +1613,11 @@ async function handleApi(req, res, pathname) {
     };
 
     try {
-      if (useFirestore) {
-        const docRef = await db.collection('interviewExperiences').add(experienceData);
-        experienceData.id = docRef.id;
-      } else {
-        await appendToJsonArrayFile(
-          INTERVIEW_EXPERIENCES_FILE,
-          experienceData,
-          MAX_INTERVIEW_EXPERIENCE_ENTRIES
-        );
-      }
+      await appendToJsonArrayFile(
+        INTERVIEW_EXPERIENCES_FILE,
+        experienceData,
+        MAX_INTERVIEW_EXPERIENCE_ENTRIES
+      );
       return sendJson(res, 201, { success: true, experience: experienceData });
     } catch (err) {
       console.error('Error saving interview experience:', err);
@@ -2022,11 +1644,7 @@ async function handleApi(req, res, pathname) {
         recommendations: payload.recommendations || [],
       };
 
-      if (useFirestore) {
-        await db.collection(COLLECTIONS.AUDITS_HISTORY).doc(auditData.auditId).set(auditData);
-      } else {
-        await appendToJsonArrayFile(AUDITS_FILE, auditData, MAX_AUDIT_HISTORY_ENTRIES);
-      }
+      await appendToJsonArrayFile(AUDITS_FILE, auditData, MAX_AUDIT_HISTORY_ENTRIES);
 
       return sendJson(res, 201, { success: true, auditId: auditData.auditId });
     } catch (err) {
@@ -2044,25 +1662,13 @@ async function handleApi(req, res, pathname) {
     const limit = Number(url.searchParams.get('limit')) || 20;
 
     try {
-      let history = [];
-      if (useFirestore) {
-        let query = db.collection(COLLECTIONS.AUDITS_HISTORY).where('userId', '==', session.sub);
-
-        if (repoUrl) {
-          query = query.where('repoUrl', '==', repoUrl);
-        }
-
-        const snapshot = await query.orderBy('timestamp', 'desc').limit(limit).get();
-        history = snapshot.docs.map((doc) => doc.data());
-      } else {
-        const allAudits = await readAudits();
-        history = allAudits.filter((a) => a.userId === session.sub);
-        if (repoUrl) {
-          history = history.filter((a) => a.repoUrl === repoUrl);
-        }
-        history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        history = history.slice(0, limit);
+      const allAudits = await readAudits();
+      let history = allAudits.filter((a) => a.userId === session.sub);
+      if (repoUrl) {
+        history = history.filter((a) => a.repoUrl === repoUrl);
       }
+      history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      history = history.slice(0, limit);
 
       return sendJson(res, 200, history);
     } catch (err) {
@@ -2079,19 +1685,11 @@ async function handleApi(req, res, pathname) {
     const repoUrl = url.searchParams.get('repoUrl');
 
     try {
-      let history = [];
-      if (useFirestore) {
-        let query = db.collection(COLLECTIONS.AUDITS_HISTORY).where('userId', '==', session.sub);
-        if (repoUrl) query = query.where('repoUrl', '==', repoUrl);
-        const snapshot = await query.orderBy('timestamp', 'desc').limit(100).get();
-        history = snapshot.docs.map((doc) => doc.data()).reverse();
-      } else {
-        const allAudits = await readAudits();
-        history = allAudits.filter((a) => a.userId === session.sub);
-        if (repoUrl) history = history.filter((a) => a.repoUrl === repoUrl);
-        history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        history = history.slice(0, 100).reverse();
-      }
+      const allAudits = await readAudits();
+      let history = allAudits.filter((a) => a.userId === session.sub);
+      if (repoUrl) history = history.filter((a) => a.repoUrl === repoUrl);
+      history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      history = history.slice(0, 100).reverse();
 
       const trends = history.map((a) => ({
         timestamp: a.timestamp,
@@ -2169,11 +1767,10 @@ async function handleApi(req, res, pathname) {
     });
   }
 
-  // ── Quiz Results (Firestore) ──────────────────────────────────────────────
+  // ── Quiz Results ──────────────────────────────────────────────────────────
   if (pathname === '/api/quiz-results' && req.method === 'POST') {
     const session = getSession(req);
     if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
-    if (!useFirestore) return sendJson(res, 503, { error: 'User store unavailable.' });
 
     let payload;
     try {
@@ -2216,6 +1813,8 @@ async function handleApi(req, res, pathname) {
     try {
       const attemptId = crypto.randomUUID();
       const attempt = {
+        id: attemptId,
+        userId: session.sub,
         quizId: String(quizId),
         quizTitle: String(quizTitle),
         score: Number(score),
@@ -2226,12 +1825,7 @@ async function handleApi(req, res, pathname) {
         completedAt: new Date().toISOString(),
       };
 
-      await db
-        .collection('users')
-        .doc(session.sub)
-        .collection('quizResults')
-        .doc(attemptId)
-        .set(attempt);
+      await appendToJsonArrayFile(QUIZ_RESULTS_FILE, attempt, MAX_AUDIT_HISTORY_ENTRIES);
 
       return sendJson(res, 201, { success: true, attemptId, attempt });
     } catch (error) {
@@ -2243,7 +1837,6 @@ async function handleApi(req, res, pathname) {
   if (pathname === '/api/quiz-results' && req.method === 'GET') {
     const session = getSession(req);
     if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
-    if (!useFirestore) return sendJson(res, 503, { error: 'User store unavailable.' });
 
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
@@ -2251,22 +1844,12 @@ async function handleApi(req, res, pathname) {
       const limit = Math.min(Number.isNaN(parsedLimit) ? 20 : parsedLimit, 100);
       const topic = url.searchParams.get('topic');
 
-      let query = db
-        .collection('users')
-        .doc(session.sub)
-        .collection('quizResults')
-        .orderBy('completedAt', 'desc')
-        .limit(limit);
-
-      if (topic) {
-        query = query.where('topic', '==', topic);
-      }
-
-      const snapshot = await query.get();
-      const results = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      let results = (await readJsonArray(QUIZ_RESULTS_FILE)).filter(
+        (r) => r.userId === session.sub
+      );
+      if (topic) results = results.filter((r) => r.topic === topic);
+      results.sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
+      results = results.slice(0, limit);
 
       return sendJson(res, 200, {
         success: true,
@@ -2349,18 +1932,9 @@ async function handleApi(req, res, pathname) {
     if (!session) return sendJson(res, 401, { error: 'Login required.' });
 
     try {
-      if (useFirestore) {
-        const snap = await db.collection('users').doc(session.sub).collection('problemNotes').get();
-        const notes = {};
-        snap.forEach((doc) => {
-          notes[doc.id] = doc.data();
-        });
-        return sendJson(res, 200, { success: true, notes });
-      } else {
-        const users = await readUsers();
-        const user = users.find((u) => u.id === session.sub);
-        return sendJson(res, 200, { success: true, notes: user?.problemNotes || {} });
-      }
+      const users = await readUsers();
+      const user = users.find((u) => u.id === session.sub);
+      return sendJson(res, 200, { success: true, notes: user?.problemNotes || {} });
     } catch (err) {
       console.error('Error fetching notes:', err);
       return sendJson(res, 500, { error: 'Failed to fetch notes.' });
@@ -2392,21 +1966,12 @@ async function handleApi(req, res, pathname) {
     };
 
     try {
-      if (useFirestore) {
-        await db
-          .collection('users')
-          .doc(session.sub)
-          .collection('problemNotes')
-          .doc(String(problemId))
-          .set(noteData);
-      } else {
-        const users = await readUsers();
-        const idx = users.findIndex((u) => u.id === session.sub);
-        if (idx !== -1) {
-          if (!users[idx].problemNotes) users[idx].problemNotes = {};
-          users[idx].problemNotes[problemId] = noteData;
-          await writeUsers(users);
-        }
+      const users = await readUsers();
+      const idx = users.findIndex((u) => u.id === session.sub);
+      if (idx !== -1) {
+        if (!users[idx].problemNotes) users[idx].problemNotes = {};
+        users[idx].problemNotes[problemId] = noteData;
+        await writeUsers(users);
       }
       return sendJson(res, 200, { success: true, note: noteData });
     } catch (err) {
@@ -2421,22 +1986,9 @@ async function handleApi(req, res, pathname) {
     if (!session) return sendJson(res, 401, { error: 'Login required.' });
 
     try {
-      if (useFirestore) {
-        const snap = await db
-          .collection('users')
-          .doc(session.sub)
-          .collection('spacedRepetition')
-          .get();
-        const cards = {};
-        snap.forEach((doc) => {
-          cards[doc.id] = doc.data();
-        });
-        return sendJson(res, 200, { success: true, cards });
-      } else {
-        const users = await readUsers();
-        const user = users.find((u) => u.id === session.sub);
-        return sendJson(res, 200, { success: true, cards: user?.spacedRepetition || {} });
-      }
+      const users = await readUsers();
+      const user = users.find((u) => u.id === session.sub);
+      return sendJson(res, 200, { success: true, cards: user?.spacedRepetition || {} });
     } catch (err) {
       console.error('Error fetching spaced repetition cards:', err);
       return sendJson(res, 500, { error: 'Failed to fetch spaced repetition cards.' });
@@ -2466,21 +2018,12 @@ async function handleApi(req, res, pathname) {
     updated.problemId = parseInt(problemId) || 0;
 
     try {
-      if (useFirestore) {
-        await db
-          .collection('users')
-          .doc(session.sub)
-          .collection('spacedRepetition')
-          .doc(String(problemId))
-          .set(updated);
-      } else {
-        const users = await readUsers();
-        const idx = users.findIndex((u) => u.id === session.sub);
-        if (idx !== -1) {
-          if (!users[idx].spacedRepetition) users[idx].spacedRepetition = {};
-          users[idx].spacedRepetition[problemId] = updated;
-          await writeUsers(users);
-        }
+      const users = await readUsers();
+      const idx = users.findIndex((u) => u.id === session.sub);
+      if (idx !== -1) {
+        if (!users[idx].spacedRepetition) users[idx].spacedRepetition = {};
+        users[idx].spacedRepetition[problemId] = updated;
+        await writeUsers(users);
       }
       return sendJson(res, 200, { success: true, card: updated });
     } catch (err) {
@@ -2495,39 +2038,21 @@ async function handleApi(req, res, pathname) {
     if (!session) return sendJson(res, 401, { error: 'Login required.' });
 
     try {
-      if (useFirestore) {
-        const doc = await db.collection('users').doc(session.sub).get();
-        if (!doc.exists) return sendJson(res, 404, { error: 'User not found.' });
-        const userData = doc.data();
-        return sendJson(res, 200, {
-          success: true,
-          revisionSchedule: userData.revisionSchedule || {},
-          revisionCalendar: userData.revisionCalendar || {
-            tasks: [],
-            history: [],
-            streak: 0,
-            longestStreak: 0,
-            missedDays: 0,
-            stats: {},
-          },
-        });
-      } else {
-        const users = await readUsers();
-        const user = users.find((u) => u.id === session.sub);
-        if (!user) return sendJson(res, 404, { error: 'User not found.' });
-        return sendJson(res, 200, {
-          success: true,
-          revisionSchedule: user.revisionSchedule || {},
-          revisionCalendar: user.revisionCalendar || {
-            tasks: [],
-            history: [],
-            streak: 0,
-            longestStreak: 0,
-            missedDays: 0,
-            stats: {},
-          },
-        });
-      }
+      const users = await readUsers();
+      const user = users.find((u) => u.id === session.sub);
+      if (!user) return sendJson(res, 404, { error: 'User not found.' });
+      return sendJson(res, 200, {
+        success: true,
+        revisionSchedule: user.revisionSchedule || {},
+        revisionCalendar: user.revisionCalendar || {
+          tasks: [],
+          history: [],
+          streak: 0,
+          longestStreak: 0,
+          missedDays: 0,
+          stats: {},
+        },
+      });
     } catch (err) {
       console.error('Error fetching revision data:', err);
       return sendJson(res, 500, { error: 'Failed to fetch revision data.' });
@@ -2551,16 +2076,12 @@ async function handleApi(req, res, pathname) {
     if (revisionCalendar) updates.revisionCalendar = revisionCalendar;
 
     try {
-      if (useFirestore) {
-        await db.collection('users').doc(session.sub).update(updates);
-      } else {
-        const users = await readUsers();
-        const idx = users.findIndex((u) => u.id === session.sub);
-        if (idx !== -1) {
-          if (revisionSchedule) users[idx].revisionSchedule = revisionSchedule;
-          if (revisionCalendar) users[idx].revisionCalendar = revisionCalendar;
-          await writeUsers(users);
-        }
+      const users = await readUsers();
+      const idx = users.findIndex((u) => u.id === session.sub);
+      if (idx !== -1) {
+        if (revisionSchedule) users[idx].revisionSchedule = revisionSchedule;
+        if (revisionCalendar) users[idx].revisionCalendar = revisionCalendar;
+        await writeUsers(users);
       }
       return sendJson(res, 200, { success: true });
     } catch (err) {
@@ -2656,34 +2177,26 @@ async function handleApi(req, res, pathname) {
     const { topic, difficulty, score = 50 } = body;
 
     try {
-      if (useFirestore) {
-        await db.collection('users').doc(session.sub).collection('studyRoomResults').add({
+      await appendToJsonArrayFile(
+        STUDY_ROOM_RESULTS_FILE,
+        {
+          userId: session.sub,
           roomId,
           topic,
           difficulty,
           score,
           completedAt: new Date().toISOString(),
-        });
+        },
+        MAX_AUDIT_HISTORY_ENTRIES
+      );
 
-        const userRef = db.collection('users').doc(session.sub);
-        const userSnap = await userRef.get();
-        if (userSnap.exists) {
-          const curStreak = userSnap.data().streak || 0;
-          await userRef.update({
-            totalXp: FieldValue.increment(score),
-            streak: curStreak + 1,
-            lastActive: new Date().toISOString(),
-          });
-        }
-      } else {
-        const users = await readUsers();
-        const idx = users.findIndex((u) => u.id === session.sub);
-        if (idx !== -1) {
-          users[idx].xp = (users[idx].xp || 0) + score;
-          users[idx].streak = (users[idx].streak || 0) + 1;
-          users[idx].lastActive = new Date().toISOString();
-          await writeUsers(users);
-        }
+      const users = await readUsers();
+      const idx = users.findIndex((u) => u.id === session.sub);
+      if (idx !== -1) {
+        users[idx].xp = (users[idx].xp || 0) + score;
+        users[idx].streak = (users[idx].streak || 0) + 1;
+        users[idx].lastActive = new Date().toISOString();
+        await writeUsers(users);
       }
       return sendJson(res, 200, { success: true, xpAwarded: score });
     } catch (err) {
@@ -2693,28 +2206,14 @@ async function handleApi(req, res, pathname) {
   }
 
   // ── Battle routes ──────────────────────────────────────────────────────────
-  // All battle routes require Firestore. If useFirestore is false (local dev
-  // with no Firebase env vars), we return 503 rather than crashing.
-  // All routes require an active session — unauthenticated requests get 401.
+  // Battle mode relies on a document store (previously Firestore). It is
+  // disabled in this pure-JWT build, so every battle route returns 503.
+  // All routes still require an active session — unauthenticated requests get 401.
 
   if (pathname === '/api/battles' && req.method === 'POST') {
     const session = getSession(req);
     if (!session) return sendJson(res, 401, { error: 'Login required.' });
-    if (!useFirestore) return sendJson(res, 503, { error: 'Battle mode requires Firestore.' });
-
-    try {
-      const { opponentEmail, difficulty } = await readJsonBody(req);
-      if (!opponentEmail?.trim()) {
-        return sendJson(res, 400, { error: 'opponentEmail is required.' });
-      }
-      if (!['Easy', 'Medium', 'Hard'].includes(difficulty)) {
-        return sendJson(res, 400, { error: 'difficulty must be Easy, Medium, or Hard.' });
-      }
-      const battleId = await createBattle(session.sub, opponentEmail.trim(), difficulty);
-      return sendJson(res, 201, { battleId });
-    } catch (err) {
-      return sendJson(res, 400, { error: err.message });
-    }
+    return sendJson(res, 503, { error: 'Battle mode is currently unavailable.' });
   }
 
   // GET /api/battles/history  — must be declared BEFORE the :id pattern below
@@ -2722,93 +2221,9 @@ async function handleApi(req, res, pathname) {
   if (pathname === '/api/battles/history' && req.method === 'GET') {
     const session = getSession(req);
     if (!session) return sendJson(res, 401, { error: 'Login required.' });
-    if (!useFirestore) return sendJson(res, 503, { error: 'Battle mode requires Firestore.' });
-
-    try {
-      const params = new URL(req.url, `http://${req.headers.host}`).searchParams;
-      const limit = Math.min(parseInt(params.get('limit') || '20', 10), 50);
-      const startAfter = params.get('cursor') || null;
-      const history = await getHistory(session.sub, limit, startAfter);
-      return sendJson(res, 200, {
-        history,
-        nextCursor: history.length === limit ? history[history.length - 1].id : null,
-      });
-    } catch (err) {
-      return sendJson(res, 400, { error: err.message });
-    }
+    return sendJson(res, 503, { error: 'Battle mode is currently unavailable.' });
   }
 
-  // Dynamic battle routes: /api/battles/:id and /api/battles/:id/(join|start|submit|result)
-  const battleMatch = pathname.match(/^\/api\/battles\/([^/]+?)(?:\/(join|start|submit|result))?$/);
-
-  if (battleMatch) {
-    const session = getSession(req);
-    if (!session) return sendJson(res, 401, { error: 'Login required.' });
-    if (!useFirestore) return sendJson(res, 503, { error: 'Battle mode requires Firestore.' });
-
-    const [, battleId, action] = battleMatch;
-
-    // GET /api/battles/:id — poll endpoint, returns state + timeRemainingMs
-    if (!action && req.method === 'GET') {
-      try {
-        const battle = await getBattle(battleId);
-        return sendJson(res, 200, battle);
-      } catch (err) {
-        return sendJson(res, 404, { error: err.message });
-      }
-    }
-
-    // POST /api/battles/:id/join
-    if (action === 'join' && req.method === 'POST') {
-      try {
-        const result = await joinBattle(battleId, session.sub);
-        return sendJson(res, 200, result);
-      } catch (err) {
-        return sendJson(res, 400, { error: err.message });
-      }
-    }
-
-    // POST /api/battles/:id/start
-    if (action === 'start' && req.method === 'POST') {
-      try {
-        const result = await startBattle(battleId, session.sub);
-        return sendJson(res, 200, result);
-      } catch (err) {
-        return sendJson(res, 400, { error: err.message });
-      }
-    }
-
-    // POST /api/battles/:id/submit
-    if (action === 'submit' && req.method === 'POST') {
-      try {
-        const { code } = await readJsonBody(req);
-        if (!code?.trim()) {
-          return sendJson(res, 400, { error: 'code is required.' });
-        }
-        const result = await submitSolution(battleId, session.sub, code);
-        return sendJson(res, 200, result);
-      } catch (err) {
-        return sendJson(res, 400, { error: err.message });
-      }
-    }
-
-    // GET /api/battles/:id/result
-    if (action === 'result' && req.method === 'GET') {
-      try {
-        const battle = await getBattle(battleId);
-        if (!['completed', 'expired'].includes(battle.status)) {
-          return sendJson(res, 409, { error: 'Battle is not finished yet.' });
-        }
-        return sendJson(res, 200, {
-          winner: battle.winner,
-          xpAwarded: battle.xpAwarded,
-          status: battle.status,
-        });
-      } catch (err) {
-        return sendJson(res, 404, { error: err.message });
-      }
-    }
-  }
   // ── End battle routes ─────
 
   if (pathname === '/api/verify-email' && req.method === 'GET') {
@@ -3308,31 +2723,18 @@ CRITICAL RULES:
   // ── Leaderboard ──────────────────────────────────────────────────────────
   if (pathname === '/api/leaderboard' && req.method === 'GET') {
     try {
-      let leaders = [];
-      if (useFirestore) {
-        const usersSnap = await db.collection('users').orderBy('xp', 'desc').limit(50).get();
-        leaders = usersSnap.docs.map((doc) => {
-          const d = doc.data();
-          return {
-            id: doc.id,
-            name: d.name || 'Learner',
-            xp: d.xp || 0,
-            level: d.level || 1,
-            avatar: d.avatar || '🚀',
-          };
-        });
-      } else {
-        const users = await readUsers();
-        leaders = users.map((u) => ({
+      const users = await readUsers();
+      const leaders = users
+        .map((u) => ({
           id: u.id || u.email,
           name: u.name || 'Learner',
           xp: u.xp || 0,
           level: u.level || 1,
           avatar: u.avatar || '🚀',
-        }));
-        leaders.sort((a, b) => b.xp - a.xp);
-        leaders = leaders.slice(0, 50);
-      }
+        }))
+        .sort((a, b) => b.xp - a.xp)
+        .slice(0, 50);
+
       const session = getSession(req);
       return sendJson(res, 200, { leaders, currentUserId: session?.sub || null });
     } catch (err) {
@@ -3347,43 +2749,34 @@ CRITICAL RULES:
     if (!session) return sendJson(res, 401, { error: 'Authentication required.' });
     try {
       const body = await readJsonBody(req);
-      if (useFirestore) {
-        await db
-          .collection('users')
-          .doc(session.sub)
-          .set(
-            {
-              name: body.name,
-              xp: body.xp || 0,
-              level: body.level || 1,
-              avatar: body.avatar || '🚀',
-              activityData: body.activityData || {},
-              updatedAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
+      const users = await readUsers();
+      const idx = users.findIndex((u) => u.id === session.sub || u.email === session.email);
+      if (idx !== -1) {
+        users[idx].name = body.name;
+        users[idx].xp = body.xp || 0;
+        users[idx].level = body.level || 1;
+        users[idx].avatar = body.avatar || '🚀';
+        if (body.bio !== undefined) users[idx].bio = body.bio;
+        if (body.badges) users[idx].badges = body.badges;
+        if (body.languages) users[idx].languages = body.languages;
+        if (body.projects) users[idx].projects = body.projects;
+        if (body.activityData) users[idx].activityData = body.activityData;
       } else {
-        const users = await readUsers();
-        const idx = users.findIndex((u) => u.id === session.sub || u.email === session.email);
-        if (idx !== -1) {
-          users[idx].name = body.name;
-          users[idx].xp = body.xp || 0;
-          users[idx].level = body.level || 1;
-          users[idx].avatar = body.avatar || '🚀';
-          if (body.activityData) users[idx].activityData = body.activityData;
-        } else {
-          users.push({
-            id: session.sub,
-            email: session.email,
-            name: body.name,
-            xp: body.xp || 0,
-            level: body.level || 1,
-            avatar: body.avatar || '🚀',
-            activityData: body.activityData || {},
-          });
-        }
-        await writeUsers(users);
+        users.push({
+          id: session.sub,
+          email: session.email,
+          name: body.name,
+          xp: body.xp || 0,
+          level: body.level || 1,
+          avatar: body.avatar || '🚀',
+          bio: body.bio,
+          badges: body.badges,
+          languages: body.languages,
+          projects: body.projects,
+          activityData: body.activityData || {},
+        });
       }
+      await writeUsers(users);
       return sendJson(res, 200, { success: true });
     } catch (err) {
       console.error('Progress sync error:', err);
@@ -4592,8 +3985,6 @@ export {
 };
 
 if (process.env.VERCEL === '1') {
-  db = initializeFirebase();
-  useFirestore = !!db;
   validateEnv();
 }
 
@@ -4606,8 +3997,6 @@ if (process.env.VERCEL !== '1' && process.env.NODE_ENV !== 'test') {
   loadEnvFile()
     .then(() => {
       validateEnv();
-      db = initializeFirebase();
-      useFirestore = !!db;
       const port = Number(process.env.PORT || 3000);
       const host = process.env.HOST || '127.0.0.1';
 
