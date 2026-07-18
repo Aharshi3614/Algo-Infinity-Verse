@@ -61,6 +61,7 @@ const practiceTools = [
   { name: "Compiler Explorer", path: "/pages/tools/compiler-explorer/compiler-explorer.html", category: "Other", icon: "fa-microchip", desc: "Explore how different compilers translate your code into assembly and machine instructions." },
   { name: "LeetCode Sync", path: "/pages/tools/leetcode/leetcode.html", category: "Other", icon: "fa-cloud-arrow-up", desc: "Sync your LeetCode submissions and track your progress across platforms." },
   { name: "Assessments", path: "/pages/tools/quiz-system/quiz-system.html", category: "Other", icon: "fa-clipboard-question", desc: "Take structured assessments to evaluate your DSA knowledge and track improvement over time." },
+  { name: "CSS Design Token Playground", path: "/pages/tools/design-token-playground/design-token-playground.html", category: "Other", icon: "fa-palette", desc: "Edit AIV :root tokens (colors, spacing, fonts) and live-preview quiz card and navbar — matching README Customization." },
 ];
 
 /* ─── Categories ─── */
