@@ -204,7 +204,8 @@ function train() {
 
   isTraining = true;
   document.getElementById('trainBtn').textContent = '⏹️ Stop';
-  const speed = document.getElementById('speedBtn').textContent.includes('Fast') ? 50 : 200;
+  const speedText = document.getElementById('speedBtn').textContent;
+  const speed = speedText.includes('Fast') ? 50 : speedText.includes('Normal') ? 200 : 500;
   trainingInterval = setInterval(step, speed);
 }
 
