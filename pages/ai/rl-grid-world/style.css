@@ -44,10 +44,10 @@ header {
   font-weight: 600;
 }
 
-#trainBtn { background: #4CAF50; color: white; }
-#resetBtn { background: #f44336; color: white; }
-#stepBtn { background: #2196F3; color: white; }
-#speedBtn { background: #FF9800; color: white; }
+`#trainBtn` { background: `#2E7D32`; color: white; }
+`#resetBtn` { background: `#C62828`; color: white; }
+`#stepBtn` { background: `#1565C0`; color: white; }
+`#speedBtn` { background: `#E65100`; color: white; }
 
 .main-layout {
   display: grid;
