@@ -50,6 +50,7 @@
   let activeSeverity = 'all';
   let activeTab = 'visualizer';
 
+  const els = {};
 
   function $(id) {
     return document.getElementById(id);

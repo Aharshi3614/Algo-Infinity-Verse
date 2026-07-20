@@ -17,10 +17,12 @@ const practiceTools = [
   { name: "Think-Aloud AI Judge", path: "/pages/tools/think-aloud-judge/think-aloud-judge.html", category: "Practice Aids", icon: "fa-ear-listen", desc: "Verbally explain your thought process while coding and get AI feedback on your reasoning." },
   { name: "Pattern Recognition Trainer", path: "/pages/tools/pattern-trainer/pattern-trainer.html", category: "Practice Aids", icon: "fa-puzzle-piece", desc: "Train your ability to recognize common DSA problem patterns with interactive challenges." },
   { name: "Edge Case Generator", path: "/pages/tools/edge-case-generator/edge-case-generator.html", category: "Practice Aids", icon: "fa-shield-halved", desc: "Generate tricky edge cases for your solutions to ensure robust problem coverage." },
+  { name: "Test Case Builder Studio", path: "/pages/tools/testcase-builder-studio/testcase-builder-studio.html", category: "Practice Aids", icon: "fa-vial", desc: "Build min/max/empty/duplicates/sorted/random cases with expected asserts and copy practice-editor JSON." },
   { name: "Algorithm Decision Tree", path: "/pages/tools/algorithm-decision-tree/algorithm-decision-tree.html", category: "Practice Aids", icon: "fa-diagram-project", desc: "Interactive decision tree to help you pick the right algorithm for any problem." },
   { name: "Algorithm Personality", path: "/pages/tools/algorithm-personality/algorithm-personality.html", category: "Practice Aids", icon: "fa-face-smile", desc: "Discover which algorithm matches your coding personality through a fun assessment quiz." },
   { name: "Problem Deconstructor", path: "/pages/tools/problem-deconstructor/problem-deconstructor.html", category: "Practice Aids", icon: "fa-cubes", desc: "Deconstruct complex problems into sub-problems and identify reusable solution templates." },
   { name: "Approach Tradeoff Matrix", path: "/pages/tools/approach-tradeoff-matrix/approach-tradeoff-matrix.html", category: "Practice Aids", icon: "fa-table-cells", desc: "Compare brute, better, and optimal approaches on time, space, code length, and interview wow factor — save to localStorage." },
+  { name: "Brute → Optimal Diff Studio", path: "/pages/tools/brute-to-optimal-studio/brute-to-optimal-studio.html", category: "Practice Aids", icon: "fa-code-compare", desc: "Side-by-side brute vs optimal code with annotated evolution steps (e.g. sorted → two pointers) and complexity upgrades." },
   { name: "Keyboard Shortcut Trainer", path: "/pages/tools/editor-shortcut-trainer/editor-shortcut-trainer.html", category: "Practice Aids", icon: "fa-keyboard", desc: "Practice code-editor shortcuts (run, format, comment, undo) in a score-and-streak trainer game." },
 
   // ── Learning Tools ──
@@ -45,6 +47,7 @@ const practiceTools = [
   { name: "Learning Insights Dashboard", path: "/pages/tools/learning-insights-dashboard/learning-insights-dashboard.html", category: "Dashboards", icon: "fa-lightbulb", desc: "Actionable insights on your learning patterns, strengths, and areas needing focus." },
   { name: "Weakness Dashboard", path: "/pages/tools/topic-weakness-dashboard/topic-weakness-dashboard.html", category: "Dashboards", icon: "fa-triangle-exclamation", desc: "Identify your weakest DSA topics with detailed performance breakdowns and recommendations." },
   { name: "Personalized Learning Path", path: "/pages/tools/personalized-learning-path/personalized-learning-path.html", category: "Dashboards", icon: "fa-route", desc: "Generate a custom learning path based on your current skill level and target goals." },
+  { name: "Weekly DSA Study Plan", path: "/pages/tools/weekly-study-plan/weekly-study-plan.html", category: "Dashboards", icon: "fa-calendar-week", desc: "Hours/week + weak topics + interview date → auto 7-day plan with quiz/visualizer deep links and localStorage XP hooks." },
 
   // ── Simulators ──
   { name: "Algorithm Arena", path: "/pages/tools/algorithm-arena/algorithm-arena.html", category: "Simulators", icon: "fa-gamepad", desc: "Pit algorithms against each other in head-to-head performance battles." },

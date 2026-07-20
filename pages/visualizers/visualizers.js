@@ -893,6 +893,13 @@ const visualizers = [
     desc: 'Visualize stack (LIFO) and queue (FIFO) operations.',
   },
   {
+    name: 'Amortized Cost Sandbox',
+    path: '/pages/visualizers/amortized-cost-sandbox/amortized-cost-sandbox.html',
+    category: 'Data Structures',
+    icon: 'fa-chart-column',
+    desc: 'Push/resize cost bars and cumulative average — visual proof of amortized O(1) for dynamic arrays and hash maps.',
+  },
+  {
     name: 'Bloom Filter Visualizer',
     path: '/pages/visualizers/bloom-filter-visualizer/bloom-filter-visualizer.html',
     category: 'Data Structures',
@@ -989,6 +996,20 @@ const visualizers = [
     category: 'Data Structures',
     icon: 'fa-align-left',
     desc: 'How VS Code and Google Docs edit huge documents in O(log n) — split, concat, and weight-guided indexing.',
+  },
+  {
+    name: 'Alias Method Visualizer',
+    path: '/pages/visualizers/alias-method-visualizer/alias-method-visualizer.html',
+    category: 'Data Structures',
+    icon: 'fa-dice',
+    desc: 'O(1) weighted random sampling via Vose\'s Alias Method — loot tables, load balancers, ML sampling.',
+  },
+  {
+  name: 'Weighted Interval Scheduling',
+  path: '/pages/visualizers/weighted-interval-scheduling/weighted-interval-scheduling.html',
+  category: 'Algorithms',
+  icon: 'fa-calendar-check',
+  desc: 'DP + binary search for maximum-profit job scheduling — sort by end time, compute p(j), fill OPT table cell-by-cell, trace back optimal jobs, and compare against greedy.',
   },
 
   // ── Special & Creative ──
