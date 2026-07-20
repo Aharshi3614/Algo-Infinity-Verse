@@ -18,6 +18,7 @@ import {
   handleMemoryReset,
 } from '../handlers/memoryHandlers.js';
 import { handleUserPersonality } from '../handlers/personalityHandlers.js';
+import { handleRefactoringDojoSubmit } from './refactoringDojoRoutes.js';
 
 const MAX_TOPIC_LENGTH = 100;
 
@@ -318,6 +319,10 @@ export function setupApiRoutes(req, res, pathname) {
 
   if (pathname === '/api/user/personality' && req.method === 'GET') {
     return wrapHandler(handleUserPersonality, 'default', true)(req, res);
+  }
+
+  if (pathname === '/api/refactoring-dojo/submit' && req.method === 'POST') {
+    return wrapHandler(handleRefactoringDojoSubmit, 'default', true)(req, res);
   }
 
   return null;

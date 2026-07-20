@@ -321,6 +321,8 @@
     <script>
       (function() {
         if (window.__loadingStarted) return;
+        // Prevent browser scroll restoration from fighting with our scrollTo(0,0)
+        try { history.scrollRestoration = 'manual'; } catch(e) {}
         var ls = document.getElementById('loading-screen');
         if (!ls || typeof gsap === 'undefined') return;
         if (
@@ -369,6 +371,8 @@
             document.documentElement.style.scrollBehavior = 'auto';
             window.scrollTo(0, 0);
             document.documentElement.style.scrollBehavior = '';
+            // Re-enable normal scroll restoration after we've set the position
+            try { history.scrollRestoration = 'auto'; } catch(e) {}
             ls.style.display = 'none';
           }
         });
@@ -851,8 +855,8 @@
       <!-- Quiz Editor Modal -->
       <div id="quiz-editor-modal-placeholder"></div>
 
-      <!-- Quiz Modal -->
-      <div id="quiz-modal-placeholder"></div>
+      <!-- Quiz Modal (replaced by full-page topic-quiz) -->
+      <!-- Topic quiz now lives at pages/topic-quiz/topic-quiz.html -->
 
       <!-- Profile Edit Modal -->
       <div id="profile-edit-modal-placeholder"></div>
@@ -865,6 +869,9 @@
 
       <!-- Change Password Modal -->
       <div id="change-password-modal-placeholder"></div>
+
+      <!-- Delete Account Modal -->
+      <div id="delete-account-modal-placeholder"></div>
 
       <!-- XP Store Modal -->
       <div id="xp-store-placeholder"></div>
@@ -982,11 +989,12 @@
           loadPartial('game-modal-placeholder', '/partials/game-modal.html'),
           loadPartial('topic-modal-placeholder', '/partials/topic-modal.html'),
           loadPartial('quiz-editor-modal-placeholder', '/partials/quiz-editor-modal.html'),
-          loadPartial('quiz-modal-placeholder', '/partials/quiz-modal.html'),
+          // Topic quiz moved to dedicated full page: pages/topic-quiz/topic-quiz.html
           loadPartial('profile-edit-modal-placeholder', '/partials/profile-edit-modal.html'),
           loadPartial('profile-placeholder', '/partials/profile.html'),
           loadPartial('notes-modal-placeholder', '/partials/notes-modal.html'),
           loadPartial('change-password-modal-placeholder', '/partials/change-password-modal.html'),
+          loadPartial('delete-account-modal-placeholder', '/partials/delete-account-modal.html'),
           loadPartial('study-timer-placeholder', '/partials/study-timer.html'),
           loadPartial('footer-placeholder', '/partials/footer.html'),
           loadPartial('xp-store-placeholder', '/partials/xp-store-modal.html'),

@@ -63,6 +63,14 @@ const editors = [
     desc: 'Write React components with JSX, render them instantly in the preview panel. No setup, no installs.',
   },
 
+  {
+    name: 'TypeScript Playground',
+    path: '/pages/editors/typescript-playground/typescript-playground.html',
+    category: 'Web Technologies',
+    icon: 'fa-code',
+    desc: 'Write multi-file TypeScript with real type checking, live diagnostics, and auto-completion powered by the TypeScript language service.',
+  },
+
   // ── Scripting Languages ──
   {
     name: 'Ruby Editor',
@@ -107,6 +115,13 @@ const editors = [
     category: 'JVM & Functional',
     icon: 'fa-hashtag',
     desc: 'Write Haskell with a file explorer, syntax highlighting, and support for recursion, modules, and ADTs.',
+  },
+  {
+    name: 'Lisp Playground',
+    path: '/pages/editors/lisp-playground/lisp-playground.html',
+    category: 'JVM & Functional',
+    icon: 'fa-terminal',
+    desc: 'Explore functional programming paradigms, list operations, recursion, and powerful macro metaprogramming in Common Lisp.',
   },
 
   // ── Systems & Special ──

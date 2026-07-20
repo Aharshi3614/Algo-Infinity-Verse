@@ -588,6 +588,14 @@
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
+
+<url>
+    <loc>https://algoinfinityverse.com/pages/editors/typescript-playground/typescript-playground.html</loc>
+    <lastmod>2026-07-15</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+</url>
+
   <url>
     <loc>https://algoinfinityverse.com/pages/elasticsearch-academy/elasticsearch-academy.html</loc>
     <lastmod>2026-07-15</lastmod>
